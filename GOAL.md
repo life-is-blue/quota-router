@@ -14,7 +14,7 @@
   - **但这 1,840 行不是干净的可复用层**：`job-control.mjs` 直接 `import` 了 `codex.mjs`，`state.mjs` 把状态目录硬编码成 `"codex-companion"`。**不要指望直接 import 这些模块**，真要参考也是照着模式重写，不是拿来当依赖。
 - `agy`（Antigravity CLI）**有官方 headless 模式**，文档见 `agy-cli-docs-mirror/docs/antigravity/cli/headless.md`。这不是我们臆测出来的接口，是官方承诺的契约，细节见第 3 节。
 
-## 3. Sprint 1（已完成，2026-08-23）：跑通 agy 适配器
+## 3. Sprint 1（已完成，2026-08-23）：跑通 agy 适配器（详见下方 3.x 节）
 
 ### 3.1 范围
 
@@ -67,7 +67,7 @@ agy -p "<prompt>" \
 - 杀掉网络或不给权限，`/agy:research` 不会挂起终端，会在 `--print-timeout` 内退出并给出可读的错误信息。
 - `npm test` 跑 `tests/agy-cli.test.mjs`，用假的 `fake-agy-bin.mjs`（一个会输出固定 JSON 的 shell/node 脚本）覆盖：正常 SUCCESS、ERROR 状态、soft-deny 场景（exit 0 但 stderr 有 denied 关键字）、`agy` 命令不存在（ENOENT）四种情况。
 
-## 5. Sprint 2（当前目标）：`--background` / `/agy:status`
+## 5. Sprint 2（已完成，2026-08-23）：`--background` / `/agy:status`
 
 ### 5.1 范围
 
@@ -99,9 +99,52 @@ Sprint 1 是单轮调用，结果直接打印到终端就完事，不需要记�
 - `/agy:status <job-id>` 在 job 跑完前后都能给出准确状态。
 - 杀掉后台进程（模拟崩溃），`/agy:status` 不应该无限等待，要能识别"进程已死但状态文件还是 running"的情况并如实报告（不用做自动纠正，报告即可）。
 
-## 6. Sprint 2 之后的路线图（供后续接手人参考，不是现在要做的事）
+## 6. Sprint 3 契约调研（已完成，2026-08-23）：Cursor CLI headless 模式
 
-- **Sprint 3**：接入 Cursor CLI 做 `/cheap:implement`。写之前先做一次和 3.3 节同等深度的 headless 契约调研（有没有 `--print`/`-p` 等价物、输出是不是结构化 JSON、超时怎么设、权限模型是什么），不要假设它和 agy 长得一样。
-- **Sprint 4**：接入 codebuddy，同样先做契约调研。
-- **抽象时机**：三个 CLI 适配器都各自独立写完之后，**手动 diff 三份 `*-cli.mjs`**，把逐字节相同的部分（大概率是"spawn + timeout + stdin ignore + stderr 截断"这类管道基建）提取成 `lib/subprocess.mjs`。CLI 各自的参数拼装、输出解析、错误映射永远留在各自文件里，不要往上提。
+结论先说：**Cursor CLI 和 agy 长得不一样，尤其是错误处理和超时**。以下全部是 `agent --help` 和真实调用（本机已装 `2026.08.11-e8db854`，已登录 `g7rzcfpsty@privaterelay.appleid.com`）核实过的，不是抄文档。
+
+### 6.1 基本调用
+
+命令是 `agent`（不是 `cursor`），`cursor-agent`/`cursor` 是同一个二进制的别名，本机都存在。
+
+```bash
+agent -p "<prompt>" --output-format json
+```
+
+- `-p`/`--print`：非交互模式，**默认就有全部工具权限（含写文件、跑 shell）**，和 agy 不同——agy 默认工具需要审批，Cursor 默认是"能用就用"。
+- `--output-format`：`text`/`json`/`stream-json`，同 agy 一样三选一。
+
+### 6.2 真实 JSON envelope（实测，字段和 agy 完全不同）
+
+```json
+{"type":"result","subtype":"success","is_error":false,"duration_ms":8040,"duration_api_ms":8040,"result":"...","session_id":"...","request_id":"...","usage":{"inputTokens":...,"outputTokens":...,"cacheReadTokens":...,"cacheWriteTokens":0}}
+```
+
+对照 agy：响应文本字段叫 `result` 不是 `response`；会话 id 叫 `session_id` 不是 `conversation_id`；成功与否看 `is_error`（布尔）不是 `status`（字符串枚举）；`usage` 字段是驼峰命名（`inputTokens`）不是下划线（`input_tokens`）。**照抄 agy-cli.mjs 的字段名会全错，必须重新写解析逻辑。**
+
+### 6.3 硬失败时完全不给 JSON（关键坑，和 agy 相反）
+
+实测两种真实失败场景（模型名拼错、API key 无效）：**stdout 是空的（0 字节），错误信息是纯文本打在 stderr，退出码非0，即使传了 `--output-format json` 也一样不返回 JSON**。这和 agy"失败也给 JSON，status 写 ERROR"完全相反。适配器判断成功与否**必须先看 exit code + stdout 是否为空**，不能假设失败时也有 JSON 可解析。（目前没实测到任何一次 `is_error:true` 的 JSON，这条留到写代码时再确认一次，不要当成绝对事实。）
+
+### 6.4 没有权限硬拒绝、没有 hang，但拒绝信号混在自然语言里
+
+实测：不给 `--force`/`--yolo`，让 agent 跑一个 shell 命令，它会自己重试两次、被环境拒绝，**然后把"这个命令被环境拦截了"这句话写进 `result` 的自然语言文本里，整条 run 仍然 `is_error:false`、退出码 0 正常结束——不会挂起**。好消息是不会 hang；坏消息是这个拒绝信号没有像 agy 那样在 stderr 里给固定关键字，只能在 `result` 文本里模糊匹配"blocked"/"rejected"这类词，不如 agy 的 soft-deny 信号干净。
+
+### 6.5 没有原生超时 flag（和 agy 相反，必须自己包超时）
+
+`agent --help` 通读过，**没有任何 `--timeout`/`--print-timeout` 之类的参数**。Sprint 1 我们特意不给 agy 包外层超时，因为它有原生 flag；Cursor 没有，**Sprint 3 必须自己用 `spawn` 的进程外层超时（`setTimeout` + `child.kill()`）兜底**，这条和 GOAL.md 3.3 节给 agy 的建议正好相反，写 Sprint 3 任务书时不能照搬。
+
+### 6.6 权限/认证/会话相关 flag（供 Sprint 3 设计参考）
+
+- 认证：`CURSOR_API_KEY` 环境变量，或提前 `agent login`（本机已登录，headless 会用已缓存的登录态，同 agy）。
+- 自动批准：`-f/--force`（等价 `--yolo`）批准命令类操作、`--approve-mcps` 批准 MCP、`--trust` 批准工作区信任——是三个独立 flag，不像 agy 一个 `--dangerously-skip-permissions` 打包所有。只读调研场景大概率一个都不需要传。
+- 会话延续：`--resume [chatId]` / `--continue`，同 agy 的 `--conversation`/`--continue` 概念对应，`session_id` 就是要存的那个 id。
+- 模型：`--model <slug>`、`--list-models` 列出可用模型（列表很长，已实测拿到过一次完整清单）。
+- 没有本地后台/异步机制——文档提到的"Cloud Agents"是完全不同的远程托管执行方式，不是本地 spawn，Sprint 3 如果要做后台模式，还是得照 Sprint 2 的路子自己用 `detached+unref` 实现，不能指望 Cursor 自带。
+
+## 7. Sprint 3 之后的路线图（供后续接手人参考，不是现在要做的事）
+
+- **Sprint 3**：接入 Cursor CLI 做 `/cheap:implement`，按 6.1–6.6 节的契约写代码，不要照抄 agy-cli.mjs 的字段名和"不自己包超时"的判断。
+- **Sprint 4**：接入 codebuddy，同样先做一次契约调研（別假设它像 agy 或像 Cursor 中的任何一个）。
+- **抽象时机**：三个 CLI 适配器都各自独立写完之后，**手动 diff 三份 `*-cli.mjs`**，把逐字节相同的部分（大概率只剩"spawn + stdin ignore + stderr 截断"这类最基础的管道操作——**注意超时逻辑这次不能共用**，因为 agy 用原生 flag、Cursor 要自己包，两边实现方式本质不同）提取成 `lib/subprocess.mjs`。CLI 各自的参数拼装、输出解析、错误映射、超时策略永远留在各自文件里。
 - **路由策略**（什么任务分给哪个 CLI）永远留在 Claude 侧的 prompt/markdown 里，不要写进插件代码。
