@@ -1,12 +1,25 @@
 # PROGRESS.md
 
-- **目标**：为 agy 适配器增加后台执行模式与 `/agy:status` 状态查询，实现耗时调研任务后台异步执行及可靠的 job 状态和进程存活管理。
-- **执行过程与完成项**：
-  1. **任务0（基线核对）**：重跑基线测试，确认 4 pass / 0 fail / 0 skip，并完成初始目标与风险防范梳理。
-  2. **任务1（job 存取层）**：在 `plugins/agy/scripts/job-store.mjs` 中实现 `resolveJobsDir`、`writeJob`、`readJob`、`listJobs`。严格限制状态值（`running`、`done`、`error`），并在 `writeJob` 写入后立即通过 `readJob` 进行深度 JSON 一致性核对，不匹配立即抛错。读取不存在的 job id 安全返回 `null`。
-  3. **任务2（`--background` 模式）**：在 `agy-cli.mjs` 中支持 `research --background <topic>`，生成 UUID job id，写入初始 `running` 记录，以 `spawn(process.execPath, [__filename, '--worker', jobId, prompt], {detached: true, stdio: 'ignore'})` 启动后台 worker 并 `unref()`，回写 PID 后立刻退出（耗时 <0.1s）。Worker 内部调用 `runAgyResearch`，完成后可靠落盘 `done` / `error` 终态。
-  4. **任务3（`/agy:status` 命令）**：新建 `plugins/agy/commands/status.md`，实现 `agy-cli.mjs status [job-id]`。支持单任务详情与最近任务列表查询。针对 `running` 状态使用 `process.kill(pid, 0)` 进行进程存活检测，若进程已死（`ESRCH`）明确标注 `running (进程已消失，状态未知)` 且不擅自篡改文件内容。
-  5. **任务4（自动化测试与反向验证）**：
-     - 测试覆盖：基线4个 + 新增11个 = 15个测试全部通过（15 pass, 0 fail, 0 skip）。
-     - 反向验证：故意注释 `writeJob` 读回校验逻辑并模拟文件写入异常，测试立即变红（1 fail, 14 pass）；恢复校验后全部恢复全绿（15 pass）。
-- **最大风险防范**：严格核对写入状态防静默截断；`process.kill(pid, 0)` 准确定位假死进程；零新增 npm 依赖，遵循白名单约束。
+## 任务0（2026-08-23）基线核对
+- 基线：`node --test tests/*.test.mjs` → **15 pass / 0 fail / 0 skip** ✓
+- `agent` → `/data/home/bluejqhuang/.local/bin/agent`，版本 `2026.08.11-e8db854`
+- `git diff 980d9fc -- GOAL.md` 为空 ✓
+
+### 理解的目标 / 顺序 / 最大风险（≤10行）
+1. **目标**：接入 Cursor CLI（`agent`），做只读调研 `/cursor:research`，与 `/agy:research` 平级，不照抄 agy。
+2. **顺序**：骨架(plugin.json/research.md/marketplace) → cursor-cli.mjs（自管超时+kill）→ fake-bin 测试 → 反向验证 kill。
+3. **成败判定**：exit===0 且 stdout 非空才 JSON.parse；失败无 JSON（stderr 纯文本）。
+4. **超时**：无原生 `--timeout`，必须 `setTimeout` + SIGTERM → 2s → SIGKILL。
+5. **字段**：`result`/`session_id`/`usage`（驼峰）；`is_error` 不可用来判成败。
+6. **软拒绝**：对 `result` 启发式匹配 blocked|rejected|denied，带 warning。
+7. **白名单**：只改 `plugins/cursor/**`、marketplace 追加一条、`tests/**`、PROGRESS/BLOCKED；不动 agy/package.json/GOAL.md/codex-plugin-cc。
+8. **最大风险**：超时兜底若 kill 无效，卡住进程会拖死；打架时优先保证 kill 真能杀。
+
+---
+
+## 执行日志
+- [x] **任务1：骨架** — `plugins/cursor/.claude-plugin/plugin.json`、`commands/research.md`；marketplace `plugins` 长度=2；JSON.parse 通过。
+- [x] **任务2：cursor-cli.mjs** — spawn agent ask+json；setTimeout 180000 + SIGTERM/SIGKILL；exit0∧stdout非空才 parse；result 关键字 warning。真机验收：`node plugins/cursor/scripts/cursor-cli.mjs research "一句话解释什么是git rebase"` 输出可读中文解释。
+- [x] **任务3：测试** — fake-cursor-bin + 4 用例；全量 **19 pass / 0 fail / 0 skip**。
+- [x] **反向验证 kill** — 注释 kill 后 `timeout 8` 跑 SLEEP 用例 → exit 124、cancelled（进程未杀挂起）；恢复 kill 后 19/0/0 全绿。
+- 建议偏离：无。首次假 bin 缺 +x 导致 EACCES，chmod +x 后通过（记：新建 fixture 需可执行）。

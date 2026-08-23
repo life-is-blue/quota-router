@@ -1,0 +1,8 @@
+{
+  "name": "cursor",
+  "version": "0.1.0",
+  "description": "Delegate research tasks to Cursor CLI (agent) to save Opus quota.",
+  "author": {
+    "name": "quota-router"
+  }
+}
