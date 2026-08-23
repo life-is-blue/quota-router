@@ -182,7 +182,7 @@ agent -p "<prompt>" --output-format json
 
 ### 7.2 待办（按建议顺序，都不是马上要做）
 
-- **A. 写能力（价值最高）**：Sprint 3/4 各自收窄掉的写文件能力，一直没做。三个 CLI 只读调研全通了，但省 Opus 额度最狠的场景是"小改动/批量重构"，那必须能写文件。**建议做 cursor 的**（`--force`/`--trust` 已实测过，权限 flag 最清楚），一次只做一个 CLI 的写能力，先只读调研跑通再加写。做之前要重做一次契约调研——**写路径的失败模式和只读完全不同**（GOAL.md 3.4 节第 5 条那个坑就是写文件时踩出来的：顶层 `status: ERROR` 但文件其实写成了）。
+- **A. 写能力（价值最高，契约调研已完成 → 见第 9 节）**：Sprint 3/4 各自收窄掉的写文件能力，一直没做。三个 CLI 只读调研全通了，但省 Opus 额度最狠的场景是"小改动/批量重构"，那必须能写文件。**做 cursor 的**（写路径已实测，第 9 节）。三条结论决定了任务书长什么样：①失败信号比只读干净（不给 `--force` 是硬失败 exit 1，不是假成功），Sprint 3 的判断逻辑可直接复用；②第一道门是 **Workspace Trust**（目录级），stderr 必须透传；③**JSON 里没有任何改动清单**，改了哪些文件只在自然语言里，所以**必须在适配器外看磁盘核实**。测试只准动隔离 fixture（9.5 节）。
 - **B. codebuddy 后台模式**：它是唯一自带后台的（`--bg`/`--name`/`ps`/`logs`/`kill`，日志落 `~/.codebuddy/logs/`，见 8.7 节）。**做的时候别照搬 Sprint 2 给 agy 手写的 job-store**——先实测原生那套够不够用。这条的真实价值是能回答"手写 job-store 到底有没有必要"。
 - **C. cursor/agy 的 stderr 截断**：codebuddy 有、另两个没有。一个 CLI 吐几百 KB stderr 就会把主会话上下文冲掉。**这条最小、最实用**，但不许借它顺手建 `lib/`（见 7.1）。
 - **D. 路由策略**：什么任务分给哪个 CLI。**永远留在 Claude 侧的 prompt/markdown 里，不写进插件代码。**
@@ -287,3 +287,63 @@ types: message | file-history-snapshot | reasoning | function_call | ... | resul
 | 自带后台 | 无 | 无（Cloud Agents 是远程） | **有（`--bg`/`ps`/`logs`/`kill`）** |
 
 **这张表就是"不要过早抽象"的证据**：11 个维度里有 9 个三家都不一样。（Sprint 4 写完后已按约定做了 diff，实测结论是**不抽象**，连"spawn + stdio ignore + stderr 截断"这个预判也部分落空——详见 7.1 节。）
+
+## 9. Sprint A 契约调研（已完成，2026-08-23）：Cursor CLI **写路径**
+
+只读路径的契约在第 6 节。**写路径是另一套东西，单独实测过**（隔离 fixture `/tmp/probe-*`，一个 5 行 `math.js`，让它把 `add(a,b)` 改成支持第三个可选参数，跑了给 `--force` / 不给 `--force` 两次对照）。
+
+### 9.1 好消息：写路径的失败信号比只读路径**干净**（和预期相反）
+
+原本担心的是"写被拒还假报成功"（只读路径 6.4 节就是这毛病：被环境拦截却把话写进 `result`、照样 `is_error:false` + exit 0）。**实测结论相反**：
+
+| | 给 `--force` | 不给 `--force` |
+| --- | --- | --- |
+| exit code | 0 | **1** |
+| stdout | 456 字节 JSON | **0 字节** |
+| stderr | 空 | 309 字节纯文本 |
+| 文件真改了吗（md5 前后比） | **YES** | **NO** |
+
+不给 `--force` 时它**硬失败**（exit 1 + 空 stdout + stderr 纯文本），走的是 6.3 节那条"失败不给 JSON"的路，**不是**假成功。所以 Sprint 3 已经写好的判断逻辑（`exit===0 && stdout非空` 前置于 `JSON.parse`）**在写路径上直接可用，不需要为"假成功"另加防线**。
+
+### 9.2 真正的坑：拦住写操作的是 **Workspace Trust**，不是 `--force`
+
+不给 `--force` 时的 stderr 原文：
+
+```
+⚠ Workspace Trust Required
+  Cursor Agent can execute code and access files in this directory.
+  Do you trust the contents of this directory?
+    /tmp/probe-noforce
+  To proceed, you can either:
+    • Run 'agent' interactively to decide
+    • Pass --trust, --yolo, or -f if you trust this directory
+```
+
+- 这是**目录级信任门**，在 agent 干活之前就拦下了，和"某个工具调用要不要批准"是两回事。**6.6 节把 `--trust` 记成了"批准工作区信任"的独立 flag，但没测出它是写路径的第一道门。**
+- 三个 flag 都能过这道门：`--trust`、`--yolo`、`-f`/`--force`。**`--force` 顺带就把信任门开了**，所以只传 `--force` 就能写（实测确实写成了）。
+- **对适配器的含义**：报错时必须能把这段 stderr 透传出来。用户看到 "Workspace Trust Required" 才知道该加 flag；只报 "exit 1" 等于让他去猜。
+- ⚠️ **反过来说，这道门是只读调研一直安全的真正原因之一**。`/cursor:research` 用的是 `--mode ask` 且从不传 `--trust`/`--force`，等于双保险。**写能力一旦传了 `--force`，这层保护就整体消失了——它同时开了信任门和工具批准。**
+
+### 9.3 写路径的 JSON envelope：和只读**完全一样**，没有改动清单
+
+```json
+{"type":"result","subtype":"success","is_error":false,"duration_ms":10875,"duration_api_ms":10875,
+ "result":"先看一下 math.js 里 add 的现有实现。已改好：add 现在是 add(a, b, c = 0)……","session_id":"...","request_id":"...","usage":{"inputTokens":13971,...}}
+```
+
+顶层 key 和 6.2 节只读路径**逐字相同**：`type,subtype,is_error,duration_ms,duration_api_ms,result,session_id,request_id,usage`。
+
+- **没有 `files_changed`、没有 diff、没有 `permission_denials`、没有任何结构化的改动清单。**改了哪些文件只以自然语言写在 `result` 里（"已改好：add 现在是 add(a, b, c = 0)"）。
+- **这是写能力最本质的风险**：适配器**无法从 JSON 得知它到底动了哪些文件**。想知道只有一个办法——**在适配器外面看磁盘**（git status / md5 前后对比）。
+- 所以 GOAL.md 3.4 节第 5 条那个教训在这里升级成硬规矩：**涉及副作用的调用，最终必须落地核实，不能信 JSON 的自述。**本次实测就是靠 md5 前后比才敢说"文件真改了"。
+
+### 9.4 这次没观察到的副作用（写任务书时不必防，但也别假设永远如此）
+
+fixture 目录跑完仍然只有 `math.js` 一个文件：没有顺手 `git commit`、没装依赖、没留临时文件、没有备份文件。改动精准命中要求（`add(a, b, c = 0)`，`module.exports` 没动）。
+
+### 9.5 写能力的自建方式必须换（前四个 Sprint 的做法在这里会出事）
+
+Sprint 1–4 都是"让 CLI 拿任务书改 quota-router 自己"。只读适配器写错最多是代码难看；**写能力的执行者会真的改文件**，如果它同时又在 quota-router 里跑，就变成"一边改自己、一边测改文件的能力"，出事时分不清是被测代码写坏的还是执行者手滑。
+
+**规矩**：写能力的测试只准对**隔离的 fixture 目录**动手（`os.tmpdir()` 下现建现删），quota-router 自身继续走白名单保护。真机验收也只准在 fixture 里跑。
+
