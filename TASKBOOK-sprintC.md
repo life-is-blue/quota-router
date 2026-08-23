@@ -7,12 +7,12 @@
 
 ## 界限
 - 白名单（只能改/建）：`plugins/agy/**`、`plugins/cursor/**`、`plugins/codebuddy/scripts/codebuddy-cli.mjs`、`tests/**`、`PROGRESS.md`、`BLOCKED.md`。
-- 不许碰 `GOAL.md`（基线 `e0db8c4`，交付时 `git diff e0db8c4 -- GOAL.md` 必须为空）、`marketplace.json`、`package.json`、任何 TASKBOOK 文件、`../codex-plugin-cc/`。
+- 不许碰 `GOAL.md`（基线 `dbbbaaa`，交付时 `git diff dbbbaaa -- GOAL.md` 必须为空）、`marketplace.json`、`package.json`、任何 TASKBOOK 文件、`../codex-plugin-cc/`。
 - **不许建 `lib/`、不许把三个适配器改成共享实现**（GOAL.md 7.1 实测结论：不抽象）。各文件各加各的常量。
 - **不许改任何判断逻辑**：soft-deny/部分成功关键词扫描、判成败 gate、超时 kill，一个字不动。截断只发生在"把文本嵌进 Error message / warning"的出口处。**关键词扫描仍在完整 stderr 上跑（先扫后截）**。
 
 ## 任务0
-基线 `node --test tests/*.test.mjs` 应为 **31 pass 0 fail 0 skip**（commit `e0db8c4`）；对不上就停并写 BLOCKED.md。核对后把理解（≤10 行）写进 PROGRESS.md。
+基线 `node --test tests/*.test.mjs` 应为 **31 pass 0 fail 0 skip**（commit `dbbbaaa`）；对不上就停并写 BLOCKED.md。核对后把理解（≤10 行）写进 PROGRESS.md。
 
 ## 任务1：截断
 - `plugins/agy/scripts/agy-cli.mjs`：加 `MAX_STDERR_TRUNCATE = 2000`；所有把 `trimmedStderr` 嵌进 Error 的位置、soft-deny warning 里嵌的 stderr、parse 失败嵌的 `Raw output`，全部截到 2000。截断保头不保尾（`slice(0, N)`，与 codebuddy 现有写法一致）。
@@ -33,6 +33,6 @@
 
 ## 完成条件
 - 硬指标1：`node --test tests/*.test.mjs` ≥ 34 全过、0 fail、0 skip。
-- 硬指标2：`git diff e0db8c4 -- GOAL.md marketplace.json package.json` 为空；`../codex-plugin-cc/` 零改动。
+- 硬指标2：`git diff dbbbaaa -- GOAL.md marketplace.json package.json` 为空；`../codex-plugin-cc/` 零改动。
 - 每条贴真实命令输出。`BLOCKED.md` 随交付提交，没内容也写"无"。
 - 不装新 npm 依赖。同一条验收连败 3 次换下一项；结果比基线差就回滚如实报告。
