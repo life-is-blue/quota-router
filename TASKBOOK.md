@@ -7,7 +7,8 @@
 
 ## 界限
 - 白名单（只能改/建）：`plugins/agy/**`、`.claude-plugin/marketplace.json`、`tests/**`、`package.json`、`PROGRESS.md`、`BLOCKED.md`。其余只读。
-- 不许碰 `GOAL.md`、`TASKBOOK.md`（这份文档本身）：基线 commit `77c9d7a`，交付时 `git diff 77c9d7a -- GOAL.md TASKBOOK.md` 必须为空。
+- 不许碰 `GOAL.md`：基线 commit `2dd317a`，交付时 `git diff 2dd317a -- GOAL.md` 必须为空。
+- 不许碰 `TASKBOOK.md`（这份文档本身，一个字都不许改，不需要 git 指纹——你此刻读到的就是唯一版本）。
 - 不许碰 `../codex-plugin-cc/` 任何文件——只读参照，可以看它的 `plugins/codex/.claude-plugin/plugin.json`、`plugins/codex/commands/status.md` 当格式模板，一个字节都不许改。
 - 顺手活当场拦下写 BLOCKED.md、跳过：给 cursor/codebuddy 建目录、建 `lib/` 共享层、建 job 状态机/重试循环、给 CLI 装可用性探测框架——都是 GOAL.md 3.5 节已经禁过的，这里再禁一次。
 
@@ -41,7 +42,7 @@
 
 ## 完成条件
 - 硬指标1：`node --test tests/*.test.mjs` 显示至少4个测试全部通过、0个skip、0个fail。
-- 硬指标2：`git diff 77c9d7a -- GOAL.md TASKBOOK.md` 输出为空，且 `../codex-plugin-cc/` 目录零改动。
+- 硬指标2：`git diff 2dd317a -- GOAL.md` 输出为空，`TASKBOOK.md` 未被修改（`git status` 里看不到它），且 `../codex-plugin-cc/` 目录零改动。
 - 每条都要在回复里贴真实命令输出（含反向验证红→绿两份），只说"做完了"不算数。
 - `BLOCKED.md` 随交付提交，没内容也写"无"。
 - 止损：跑满 8 轮仍未达标就停，如实汇报卡在哪、还差什么。
