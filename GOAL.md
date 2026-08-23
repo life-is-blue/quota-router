@@ -155,3 +155,97 @@ agent -p "<prompt>" --output-format json
 - **Sprint 4**：接入 codebuddy，同样先做一次契约调研（別假设它像 agy 或像 Cursor 中的任何一个）。
 - **抽象时机**：三个 CLI 适配器都各自独立写完之后，**手动 diff 三份 `*-cli.mjs`**，把逐字节相同的部分（大概率只剩"spawn + stdin ignore + stderr 截断"这类最基础的管道操作——**注意超时逻辑这次不能共用**，因为 agy 用原生 flag、Cursor 要自己包，两边实现方式本质不同）提取成 `lib/subprocess.mjs`。CLI 各自的参数拼装、输出解析、错误映射、超时策略永远留在各自文件里。
 - **路由策略**（什么任务分给哪个 CLI）永远留在 Claude 侧的 prompt/markdown 里，不要写进插件代码。
+
+## 8. Sprint 4 契约调研（已完成，2026-08-23）：codebuddy CLI headless 模式
+
+结论先说：**codebuddy 是 Claude Code 的 fork，flag 名字几乎一模一样（`-p`/`--output-format`/`--resume`/`--permission-mode`/`--allowedTools`），这恰恰是最大的陷阱——长得像不等于行为一样，它的 JSON 形状和退出码语义跟 agy、Cursor 都不同**。以下全部用 `codebuddy --help` + 本机真实调用核实（本机装的是 `2.137.1`，已登录），配合官方文档库 `codebuddy-docs`（379 篇，`search-docs read codebuddy-docs headless.md` / `cli-reference.md` / `permission-modes.md`）交叉验证，不是只抄文档。
+
+### 8.1 基本调用
+
+命令是 `codebuddy`（别名 `cbc`）。
+
+```bash
+codebuddy -p "<prompt>" --permission-mode dontAsk --tools Read,Glob,Grep --output-format json
+```
+
+- `-p`/`--print`：非交互模式，打印结果后退出。
+- `--output-format`：`text`/`json`/`stream-json`，三选一，同 agy/Cursor。
+
+### 8.2 真实 JSON envelope：**stdout 是一个数组，不是单个对象**（最大差异）
+
+这是三个 CLI 里唯一这么干的。`--output-format json` 吐出的是**整条 transcript 的 JSON 数组**，实测长度会随对话轮数变化（简单问答 4–5 个元素，触发了工具调用的 12 个元素）：
+
+```
+types: message | file-history-snapshot | reasoning | function_call | ... | result/success
+```
+
+真正要的结果在**最后那个 `type:"result"` 元素**里：
+
+```json
+{"type":"result","subtype":"success","is_error":false,"result":"...","uuid":"...","session_id":"...",
+ "duration_ms":3319,"duration_api_ms":3317,"num_turns":3,"total_cost_usd":0,
+ "usage":{"input_tokens":26112,"output_tokens":135,"cache_creation_input_tokens":26112,"cache_read_input_tokens":0},
+ "permission_denials":[],"__timestamp":"..."}
+```
+
+- **不能拿 `JSON.parse(stdout)` 当对象直接取字段**——parse 出来是数组，`.result` 会是 `undefined`。必须 `Array.isArray()` 之后找 `find(x => x.type === "result")`，**不要写死 `j[j.length-1]`**（数组长度不固定，虽然实测 result 都在末尾，但按 `type` 找才是契约）。
+- 字段名对照：响应文本 `result`（同 Cursor，不同 agy 的 `response`）；会话 id `session_id`（同 Cursor）；`usage` 是**下划线**命名（同 agy，不同 Cursor 的驼峰）——**三个 CLI 各占一种组合，抄任何一份都会错**。
+- 数组里还夹着 `reasoning`（思维链原文）、`function_call`/`function_call_result`（工具调用明细）、`file-history-snapshot`。只读调研只需要 `result` 那一个元素，其余忽略；但要知道它们存在——**stdout 体积比另两个 CLI 大一个量级**（一句话问答就 17–18KB，因为整个 system prompt 都在数组第一个 `message` 元素里回显了），做截断/日志时别整份存。
+
+### 8.3 退出码完全不可信（第三种失败模式，比 Cursor 更坑）
+
+实测两种失败，退出码不一致：
+
+| 失败场景 | exit code | stdout | stderr |
+| --- | --- | --- | --- |
+| 模型名不存在（API 层 400） | **0** | **0 字节** | 纯文本 `400 model [xxx] service info not found` + 可用模型清单 |
+| flag 拼错（参数层） | 1 | 0 字节 | `error: unknown option '--xxx'` |
+
+模型名那条我**连测了两次都是 exit 0**，不是偶发。对照另两个：agy 失败给 JSON+`status:ERROR`；Cursor 失败 exit 非 0 + 空 stdout；**codebuddy 可以 exit 0 + 空 stdout + 纯文本 stderr**。
+
+- **所以判成败的唯一可靠依据是"stdout 能否 parse 出数组、且数组里能找到 `type:"result"` 元素"**。Sprint 3 给 Cursor 定的"exit===0 且 stdout 非空"这条规则在这里**不够**——exit 0 也可能是彻底失败。**照抄 cursor-cli.mjs 的判断会把 API 失败误判成成功。**
+- `is_error` 同 Cursor 一样只在成功路径出现且恒为 `false`，**不能用来判成败**。
+
+### 8.4 只读边界：用 `--tools` 白名单，而不是只靠 `--permission-mode`
+
+- `--permission-mode plan` 实测**确实拦住了写文件**（让它建 `note.txt`，目录事后是空的，进程正常退出不挂起），但官方 `permission-modes.md` 写明 plan 模式是"**委托给进入 plan 前的那个模式**（默认 `default`），额外允许写入会话计划文件"——也就是说它的只读性是"继承来的"，不是硬保证，而且它**本身就会往 `~/.codebuddy/plans/` 落盘写计划文件**（本机该目录已有 16 个历史文件）。**对纯只读调研来说这是个不该有的副作用。**
+- 官方对非交互自动化推荐的是 `--permission-mode dontAsk`（"不弹框，直接拒绝未预批准动作"，注意它是**更严**不是更宽松）。实测只读调研正常出结果。
+- 更硬的一层是 `--tools Read,Glob,Grep`（工具白名单，`""` 禁用全部内置工具、`"default"` 全给）。这是**工具层面直接不给写工具**，不依赖任何模式语义。实测 `--permission-mode dontAsk --tools Read,Glob,Grep` 正常出结果。**Sprint 4 的 `/codebuddy:research` 建议两层都上**（`dontAsk` + `--tools` 白名单），比 Cursor 的 `--mode ask` 单层更严，因为 codebuddy 默认权限比 Cursor 更开放。
+- ⚠️ **`-y` / `--dangerously-skip-permissions` 绝对不要传**。官方 headless 文档把它写成"非交互模式的必需参数"，那是针对需要写文件/跑命令的自动化场景说的；只读调研传了它等于自己把所有防线拆掉。
+
+### 8.5 权限拒绝信号和 Cursor 一样脏，`permission_denials` 是个空壳
+
+`result` 元素里有个 `permission_denials` 数组，看名字像是结构化的拒绝信号——**实测在真的发生拒绝时它依然是 `[]`**。plan 模式下写文件被拦那次，拒绝原因只出现在 `result` 的自然语言文本里（"该权限被拒绝"/"计划模式禁止我进行任何文件写入"），`is_error` 还是 `false`、`subtype` 还是 `success`。
+
+- 所以只能和 Cursor 一样做启发式关键字匹配。**但关键词表不能照抄 cursor-cli.mjs**：codebuddy 中文回复居多，实测原文是"**被拒绝**"、"**禁止**"、"**无法完成**"，英文的 `blocked`/`rejected`/`denied` 一个都没出现。中英文关键词都要覆盖。
+- `permission_denials` 字段可以存下来备查，但**不能拿它当判断依据**（和 `is_error` 一样是空壳字段）。
+
+### 8.6 没有原生超时 flag（同 Cursor，必须自己包）
+
+`codebuddy --help` 全量通读 + 官方 `cli-reference.md` 全量参数表核对，**没有任何 `--timeout` 参数**。同 Cursor，必须自己 `setTimeout` + `SIGTERM` → 2s → `SIGKILL`。另有 `--max-turns <n>` 可以限制 agent 轮次（这是"逻辑刹车"不是"时间刹车"，两者不能互相替代，只读调研可以顺手加一个防跑飞）。
+
+### 8.7 其它已核实的 flag（供后续 Sprint 参考，Sprint 4 不用）
+
+- **它自带后台机制**（agy/Cursor 都没有）：`--bg` detached 运行 + `--name <name>` 命名，配套 `codebuddy ps` / `logs <pid|name>` / `kill <pid|name>`，日志落 `~/.codebuddy/logs/`。**如果以后要给 codebuddy 做后台模式，不该照搬 Sprint 2 给 agy 手写的 job-store，先评估直接用它自带的这套。**
+- 还有更重的 `codebuddy daemon start/stop/status`（HTTP 服务）、`--serve`、`--acp`、`--sandbox`、`--worktree`、`--prewarm`（消除冷启动）。这些都是 agy/Cursor 没有的能力面，**但也是"别把单引擎桥接当多引擎底座"这条教训的活例子——能力面越大越不该硬塞进共享抽象**。
+- 会话延续：`--resume <id>` / `--continue`，`session_id` 就是要存的 id（三个 CLI 概念一致）。
+- 结构化输出：`--json-schema '<JSON Schema>'` 可以强制输出落到 `structured_output` 字段（agy/Cursor 都没有）。只读调研不需要，但这是它独有的强项，记下来。
+- 认证隐式，用本机已登录态；`--model` 支持的模型清单很长（实测跑到过 `deepseek-v4-flash-ioa`——**说明默认模型不一定是 Claude，做质量预期时要注意**）。
+
+### 8.8 三个 CLI 契约差异总表（写代码前必读，防止照抄）
+
+| 维度 | agy | Cursor (`agent`) | codebuddy |
+| --- | --- | --- | --- |
+| stdout 形状 | 单个 JSON 对象 | 单个 JSON 对象 | **JSON 数组（整条 transcript）** |
+| 响应文本字段 | `response` | `result` | `result` |
+| 会话 id | `conversation_id` | `session_id` | `session_id` |
+| `usage` 命名 | 下划线 | **驼峰** | 下划线 |
+| 判成败依据 | `status` 枚举 | exit 0 且 stdout 非空 | **stdout 里找得到 `type:"result"`** |
+| 失败时退出码 | 0（给 JSON） | 非 0 | **可能是 0（API 失败）也可能 1（参数失败）** |
+| 失败时给 JSON 吗 | 给 | 不给 | 不给 |
+| 超时 | **原生 `--print-timeout`** | 自己包 | 自己包 |
+| 只读手段 | 默认需审批 | `--mode ask` | `dontAsk` + `--tools` 白名单 |
+| 拒绝信号 | stderr 干净关键字 | `result` 里英文关键字 | **`result` 里中文关键字**（`permission_denials` 是空壳） |
+| 自带后台 | 无 | 无（Cloud Agents 是远程） | **有（`--bg`/`ps`/`logs`/`kill`）** |
+
+**这张表就是"不要过早抽象"的证据**：11 个维度里有 9 个三家都不一样。等 Sprint 4 写完再回头 diff 三份 `*-cli.mjs`，能共用的大概只剩 `spawn` + `stdio ignore` + stderr 截断。
