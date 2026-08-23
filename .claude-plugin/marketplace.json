@@ -1,0 +1,21 @@
+{
+  "name": "quota-router",
+  "owner": {
+    "name": "quota-router"
+  },
+  "metadata": {
+    "description": "Router plugins for Claude Code to delegate tasks to local CLIs.",
+    "version": "0.1.0"
+  },
+  "plugins": [
+    {
+      "name": "agy",
+      "description": "Delegate research tasks to Antigravity CLI (agy) to save Opus quota.",
+      "version": "0.1.0",
+      "author": {
+        "name": "quota-router"
+      },
+      "source": "./plugins/agy"
+    }
+  ]
+}
