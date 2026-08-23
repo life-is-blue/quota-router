@@ -183,7 +183,7 @@ agent -p "<prompt>" --output-format json
 ### 7.2 待办（按建议顺序，都不是马上要做）
 
 - **A. 写能力（价值最高，契约调研已完成 → 见第 9 节）**：Sprint 3/4 各自收窄掉的写文件能力，一直没做。三个 CLI 只读调研全通了，但省 Opus 额度最狠的场景是"小改动/批量重构"，那必须能写文件。**做 cursor 的**（写路径已实测，第 9 节）。三条结论决定了任务书长什么样：①失败信号比只读干净（不给 `--force` 是硬失败 exit 1，不是假成功），Sprint 3 的判断逻辑可直接复用；②第一道门是 **Workspace Trust**（目录级），stderr 必须透传；③**JSON 里没有任何改动清单**，改了哪些文件只在自然语言里，所以**必须在适配器外看磁盘核实**。测试只准动隔离 fixture（9.5 节）。
-- **B. codebuddy 后台模式**：它是唯一自带后台的（`--bg`/`--name`/`ps`/`logs`/`kill`，日志落 `~/.codebuddy/logs/`，见 8.7 节）。**做的时候别照搬 Sprint 2 给 agy 手写的 job-store**——先实测原生那套够不够用。这条的真实价值是能回答"手写 job-store 到底有没有必要"。
+- **B. codebuddy 后台模式（已调研，2026-08-24 挂起）**：唯一自带后台的（`--bg`/`--name`/`ps`/`logs`/`kill`）。**实测 `--bg` 在本机 `2.137.1` 上功能性损坏**（模型回复不落盘、文件不改、会话空转，两次复现，详见 8.7 节），等上游修复后重测；重测通过前不做。届时也别照搬 Sprint 2 给 agy 手写的 job-store，先实测原生那套够不够用。
 - **C. cursor/agy 的 stderr 截断**：codebuddy 有、另两个没有。一个 CLI 吐几百 KB stderr 就会把主会话上下文冲掉。**这条最小、最实用**，但不许借它顺手建 `lib/`（见 7.1）。
 - **D. 路由策略**：什么任务分给哪个 CLI。**永远留在 Claude 侧的 prompt/markdown 里，不写进插件代码。**
 
@@ -264,7 +264,8 @@ types: message | file-history-snapshot | reasoning | function_call | ... | resul
 
 ### 8.7 其它已核实的 flag（供后续 Sprint 参考，Sprint 4 不用）
 
-- **它自带后台机制**（agy/Cursor 都没有）：`--bg` detached 运行 + `--name <name>` 命名，配套 `codebuddy ps` / `logs <pid|name>` / `kill <pid|name>`，日志落 `~/.codebuddy/logs/`。**如果以后要给 codebuddy 做后台模式，不该照搬 Sprint 2 给 agy 手写的 job-store，先评估直接用它自带的这套。**
+- **它自带后台机制**（agy/Cursor 都没有）：`--bg` detached 运行 + `--name <name>` 命名，配套 `codebuddy ps` / `logs <pid|name>` / `kill <pid|name>`，日志落 `~/.codebuddy/logs/`。
+  - **⚠️ 2026-08-24 实测（本机 `2.137.1`）：`--bg` 功能性损坏，不可用。**两次独立探针（隔离 fixture，改一个 5 行文件）：任务被接（`ps` 显示 busy）、模型响应 1.2 秒就完成（遥测 `finish_reason=stop`），但 **assistant 回复不落 transcript（jsonl 只有 user/snapshot/ai-title 三行）、文件不改、会话永久空转**（只有内存探针心跳，5 分钟后手动 kill）。另两个坑：启动时打印的 `~/.codebuddy/logs/{name}.log` 恒为 0 字节，真遥测在 `~/.codebuddy/logs/YYYY-MM-DD/` 日期目录里；官方 daemon.md 声称 `--bg` 以 `--print -y` 模式运行（自动跳过权限确认），虽因功能损坏未能直接验证，但意味着**如果哪天修好了，后台任务默认就是全权限的**，届时适配器必须显式覆盖 `--permission-mode`。**结论：B（codebuddy 后台模式）挂起，等上游修复后重测；重测通过前不许基于 `--bg` 写适配器。**同步模式（`-p`）不受影响，Sprint 4 交付的 `/codebuddy:research` 照常可用。
 - 还有更重的 `codebuddy daemon start/stop/status`（HTTP 服务）、`--serve`、`--acp`、`--sandbox`、`--worktree`、`--prewarm`（消除冷启动）。这些都是 agy/Cursor 没有的能力面，**但也是"别把单引擎桥接当多引擎底座"这条教训的活例子——能力面越大越不该硬塞进共享抽象**。
 - 会话延续：`--resume <id>` / `--continue`，`session_id` 就是要存的 id（三个 CLI 概念一致）。
 - 结构化输出：`--json-schema '<JSON Schema>'` 可以强制输出落到 `structured_output` 字段（agy/Cursor 都没有）。只读调研不需要，但这是它独有的强项，记下来。
