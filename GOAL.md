@@ -6,6 +6,8 @@
 
 `quota-router` 是一个独立的 Claude Code 插件仓库，让 Opus 5 作为主控，把调研 / 小改动 / 批量重构 / 对抗审查这些任务分流给本地已安装的 CLI（agy / Cursor CLI / codebuddy / 官方 Codex 插件），省 Opus 的调用额度。
 
+**现在到哪了（2026-08-23）**：三个 CLI 的**只读调研**都通了——`/agy:research`（含 `--background` + `/agy:status`）、`/cursor:research`、`/codebuddy:research`，`node --test tests/*.test.mjs` = 25 pass 0 fail 0 skip。**写文件的能力一个都还没做**（每个 Sprint 都主动收窄掉了），下一步该干什么见第 7 节。
+
 **和 `codex-plugin-cc` 的关系**：只读参照物，不 fork、不改它的代码。原因见下方"已验证的事实"。这个仓库独立存在，自己有一份 `marketplace.json`。
 
 ## 2. 已验证的事实（不是猜测，全部对照源码/官方文档核实过）
@@ -149,12 +151,48 @@ agent -p "<prompt>" --output-format json
 官方文档明确有一个 `--mode ask`："Ask mode to explore code without making changes. The agent searches your codebase and provides answers without editing files."——这是专门为只读探索设计的模式。裸 `-p`（不加 `--force`）虽然实测也不会真的落盘写文件，但官方定位是"提议但不应用"，防御层级比 `ask` 模式弱一层。**Sprint 3 的 `/cursor:research` 建议默认带上 `--mode ask`**，而不是依赖"不给 --force 所以不会写文件"这种消极默认值。
 权限还有一层更细的机制——`~/.cursor/cli-config.json` / `<project>/.cursor/cli.json` 里可以配 `Shell()`/`Read()`/`Write()`/`WebFetch()`/`Mcp()` 白名单——但这是配置文件级别的机制，比 agy 的单一 flag 复杂得多。Sprint 3 的适配器不碰这个配置文件，只用命令行 flag，把这条记在这里供以后需要更细粒度权限时参考。
 
-## 7. Sprint 3 之后的路线图（供后续接手人参考，不是现在要做的事）
+## 7. 路线图（2026-08-23 三个适配器齐活后，基于实测重写）
 
-- **Sprint 3**：接入 Cursor CLI 做 `/cheap:implement`，按 6.1–6.6 节的契约写代码，不要照抄 agy-cli.mjs 的字段名和"不自己包超时"的判断。
-- **Sprint 4**：接入 codebuddy，同样先做一次契约调研（別假设它像 agy 或像 Cursor 中的任何一个）。
-- **抽象时机**：三个 CLI 适配器都各自独立写完之后，**手动 diff 三份 `*-cli.mjs`**，把逐字节相同的部分（大概率只剩"spawn + stdin ignore + stderr 截断"这类最基础的管道操作——**注意超时逻辑这次不能共用**，因为 agy 用原生 flag、Cursor 要自己包，两边实现方式本质不同）提取成 `lib/subprocess.mjs`。CLI 各自的参数拼装、输出解析、错误映射、超时策略永远留在各自文件里。
-- **路由策略**（什么任务分给哪个 CLI）永远留在 Claude 侧的 prompt/markdown 里，不要写进插件代码。
+原来这一节写的是"Sprint 3 做 `/cheap:implement`、Sprint 4 做 codebuddy、然后 diff 三份抽 `lib/subprocess.mjs`"。前两条已完成但范围有变（Sprint 3/4 都主动收窄成了只读 research，写能力没做）；第三条**经实测已被推翻，见 7.1**。这一节替换掉旧版，后续接手人以此为准。
+
+### 7.1 抽象这件事：实测结论是「不抽」，而且这是好结果
+
+三个适配器都写完了，按约定做了手动 diff。**结论：不抽 `lib/subprocess.mjs`，也不建 `lib/`。** 不是偷懒，是量出来的：
+
+| 对比 | 差异行 | 逐字节相同的非空行 |
+| --- | --- | --- |
+| cursor ↔ codebuddy | 89 | 126 |
+| agy ↔ cursor | 275 | 89 |
+| agy ↔ codebuddy | — | 92 |
+
+「89~126 行相同」听着像有得抽，但**把相同的行按内容归类，绝大多数是语法噪音**：`}`（5 次）、`});`（4 次）、`try {`、`return reject(err);`、`process.exit(1);`、`/**`、`*/`。它们相同的原因是 JS 的括号长得一样，不是因为共享了逻辑。
+
+真正成块的实质共同点只有三处，合计不到 10 行：
+1. `stdio: ['ignore', 'pipe', 'pipe']`（一行常量）
+2. `stdoutData += chunk` / `stderrData += chunk` 两行累积
+3. ENOENT → "XX 没装/不在 PATH" 的分支（三家文案各不同，只有 `err.code === 'ENOENT'` 这个判断相同）
+
+**为不到 10 行的噪音级共性建一个 `lib/`，代价是给三个已绿的适配器同时引入一个共享依赖**——以后任一 CLI 改契约都要先问"改这里会不会碰坏另两个"。这正是第 2 节说 `codex-plugin-cc` 那 1,840 行"看起来通用"的基础设施为什么不能用的同一个病因。**抽象不做，就是这次的正确交付。**
+
+顺带订正旧路线图的两处预判错误（留着当教训）：
+- 旧版说「大概率只剩 spawn + stdin ignore + **stderr 截断**」——实测 stderr 截断**只有 codebuddy 一家实现了**（`MAX_STDERR_TRUNCATE`），agy 和 cursor 压根没截。**预判的共用点里有一个根本不存在。**
+- 旧版说超时逻辑不能共用，这条对了：agy 走原生 `--print-timeout`，另两个自己 `setTimeout`+`SIGTERM`→`SIGKILL`，agy 文件里连 `SIGTERM` 字样都没有。
+
+**给后续接手人的判据**：以后再想抽象，先跑一次 `diff --unchanged-group-format` 量相同行，再把相同的行 `sort | uniq -c` 看是不是括号。**「相同行数多」不等于「有共性」，这是这个项目验证过的一次。**
+
+### 7.2 待办（按建议顺序，都不是马上要做）
+
+- **A. 写能力（价值最高）**：Sprint 3/4 各自收窄掉的写文件能力，一直没做。三个 CLI 只读调研全通了，但省 Opus 额度最狠的场景是"小改动/批量重构"，那必须能写文件。**建议做 cursor 的**（`--force`/`--trust` 已实测过，权限 flag 最清楚），一次只做一个 CLI 的写能力，先只读调研跑通再加写。做之前要重做一次契约调研——**写路径的失败模式和只读完全不同**（GOAL.md 3.4 节第 5 条那个坑就是写文件时踩出来的：顶层 `status: ERROR` 但文件其实写成了）。
+- **B. codebuddy 后台模式**：它是唯一自带后台的（`--bg`/`--name`/`ps`/`logs`/`kill`，日志落 `~/.codebuddy/logs/`，见 8.7 节）。**做的时候别照搬 Sprint 2 给 agy 手写的 job-store**——先实测原生那套够不够用。这条的真实价值是能回答"手写 job-store 到底有没有必要"。
+- **C. cursor/agy 的 stderr 截断**：codebuddy 有、另两个没有。一个 CLI 吐几百 KB stderr 就会把主会话上下文冲掉。**这条最小、最实用**，但不许借它顺手建 `lib/`（见 7.1）。
+- **D. 路由策略**：什么任务分给哪个 CLI。**永远留在 Claude 侧的 prompt/markdown 里，不写进插件代码。**
+
+### 7.3 这个项目已经验证过的三条判断（别推翻，除非有新实测）
+
+1. **不魔改上游**：`codex-plugin-cc` 只读参照，独立仓库自己一份 marketplace。
+2. **契约靠实测，不靠文档**：三家 CLI 的官方文档都有和实际不符的地方（codebuddy 文档里 JSON 响应格式那段甚至是空的 `{...}`，全靠实测拿到 envelope）。**新增任何 CLI，先契约调研、后写代码，这个顺序不许调换。**
+3. **反向验证不能省**：每个 Sprint 都故意制造一次失败证明防线会响（注释 kill 证明进程真挂起、换判法证明会误判）。**Sprint 4 那次还额外证明了任务书本身可以是错的**——当时任务书要求的反向验证 2 在逻辑上不成立（空 stdout 会被旧判法拦下，两种判法结论相同），执行者发现后订正并在 PROGRESS.md 记了原因。**书是人写的，实测才是裁判。**
+
 
 ## 8. Sprint 4 契约调研（已完成，2026-08-23）：codebuddy CLI headless 模式
 
@@ -248,4 +286,4 @@ types: message | file-history-snapshot | reasoning | function_call | ... | resul
 | 拒绝信号 | stderr 干净关键字 | `result` 里英文关键字 | **`result` 里中文关键字**（`permission_denials` 是空壳） |
 | 自带后台 | 无 | 无（Cloud Agents 是远程） | **有（`--bg`/`ps`/`logs`/`kill`）** |
 
-**这张表就是"不要过早抽象"的证据**：11 个维度里有 9 个三家都不一样。等 Sprint 4 写完再回头 diff 三份 `*-cli.mjs`，能共用的大概只剩 `spawn` + `stdio ignore` + stderr 截断。
+**这张表就是"不要过早抽象"的证据**：11 个维度里有 9 个三家都不一样。（Sprint 4 写完后已按约定做了 diff，实测结论是**不抽象**，连"spawn + stdio ignore + stderr 截断"这个预判也部分落空——详见 7.1 节。）
