@@ -122,17 +122,19 @@ agent -p "<prompt>" --output-format json
 
 对照 agy：响应文本字段叫 `result` 不是 `response`；会话 id 叫 `session_id` 不是 `conversation_id`；成功与否看 `is_error`（布尔）不是 `status`（字符串枚举）；`usage` 字段是驼峰命名（`inputTokens`）不是下划线（`input_tokens`）。**照抄 agy-cli.mjs 的字段名会全错，必须重新写解析逻辑。**
 
-### 6.3 硬失败时完全不给 JSON（关键坑，和 agy 相反）
+### 6.3 硬失败时完全不给 JSON（关键坑，和 agy 相反，官方文档已确认）
 
-实测两种真实失败场景（模型名拼错、API key 无效）：**stdout 是空的（0 字节），错误信息是纯文本打在 stderr，退出码非0，即使传了 `--output-format json` 也一样不返回 JSON**。这和 agy"失败也给 JSON，status 写 ERROR"完全相反。适配器判断成功与否**必须先看 exit code + stdout 是否为空**，不能假设失败时也有 JSON 可解析。（目前没实测到任何一次 `is_error:true` 的 JSON，这条留到写代码时再确认一次，不要当成绝对事实。）
+实测两种真实失败场景（模型名拼错、API key 无效）：stdout 是空的（0 字节），错误信息是纯文本打在 stderr，退出码非0。**官方文档 `cli/reference/output-format.md` 明确写了这就是设计行为**：「On failure, the process exits with a non-zero code and writes an error message to stderr. No well-formed JSON object is emitted in failure cases.」——不是我们运气不好没试出来，是它就这么设计的。这和 agy"失败也给 JSON，status 写 ERROR"完全相反。适配器判断成功与否**必须先看 exit code + stdout 是否为空**，不能假设失败时也有 JSON 可解析。
+- 连带结论：`is_error` 这个字段**只在成功路径才会出现，且文档明确写死是"Always `false` for successful responses"**——也就是说 JSON 里的 `is_error` 实际上不携带任何有效信息（它出现时必然是 false），**不能拿它当判断依据**，真正的判断依据是"有没有拿到 stdout / exit code 是不是 0"。这点和 agy 的 `status` 字段（会在 JSON 里真实变化）本质不同。
 
 ### 6.4 没有权限硬拒绝、没有 hang，但拒绝信号混在自然语言里
 
 实测：不给 `--force`/`--yolo`，让 agent 跑一个 shell 命令，它会自己重试两次、被环境拒绝，**然后把"这个命令被环境拦截了"这句话写进 `result` 的自然语言文本里，整条 run 仍然 `is_error:false`、退出码 0 正常结束——不会挂起**。好消息是不会 hang；坏消息是这个拒绝信号没有像 agy 那样在 stderr 里给固定关键字，只能在 `result` 文本里模糊匹配"blocked"/"rejected"这类词，不如 agy 的 soft-deny 信号干净。
 
-### 6.5 没有原生超时 flag（和 agy 相反，必须自己包超时）
+### 6.5 没有原生超时 flag（和 agy 相反，必须自己包超时；官方参数表已确认无遗漏）
 
-`agent --help` 通读过，**没有任何 `--timeout`/`--print-timeout` 之类的参数**。Sprint 1 我们特意不给 agy 包外层超时，因为它有原生 flag；Cursor 没有，**Sprint 3 必须自己用 `spawn` 的进程外层超时（`setTimeout` + `child.kill()`）兜底**，这条和 GOAL.md 3.3 节给 agy 的建议正好相反，写 Sprint 3 任务书时不能照搬。
+`agent --help` 和官方 `cli/reference/parameters.md`（全量参数表）都通读过，**没有任何 `--timeout`/`--print-timeout` 之类的参数**（唯一带 timeout 字样的是 `agent worker --idle-release-timeout`，那是云端 worker 空闲释放时间，跟我们的单次调研请求无关）。Sprint 1 我们特意不给 agy 包外层超时，因为它有原生 flag；Cursor 没有，**Sprint 3 必须自己用 `spawn` 的进程外层超时（`setTimeout` + `child.kill()`）兜底**，这条和 GOAL.md 3.3 节给 agy 的建议正好相反，写 Sprint 3 任务书时不能照搬。
+- 顺带一提：CLI 里另有一个完全不相关的"Shell Mode"（交互式对话里直接跑 shell 命令的功能）有固定 30 秒、不可配置的超时——这是那个功能自己的限制，跟 `-p` headless 模式下 agent 自己调 shell 工具的耗时无关，别搞混。
 
 ### 6.6 权限/认证/会话相关 flag（供 Sprint 3 设计参考）
 
@@ -140,7 +142,12 @@ agent -p "<prompt>" --output-format json
 - 自动批准：`-f/--force`（等价 `--yolo`）批准命令类操作、`--approve-mcps` 批准 MCP、`--trust` 批准工作区信任——是三个独立 flag，不像 agy 一个 `--dangerously-skip-permissions` 打包所有。只读调研场景大概率一个都不需要传。
 - 会话延续：`--resume [chatId]` / `--continue`，同 agy 的 `--conversation`/`--continue` 概念对应，`session_id` 就是要存的那个 id。
 - 模型：`--model <slug>`、`--list-models` 列出可用模型（列表很长，已实测拿到过一次完整清单）。
-- 没有本地后台/异步机制——文档提到的"Cloud Agents"是完全不同的远程托管执行方式，不是本地 spawn，Sprint 3 如果要做后台模式，还是得照 Sprint 2 的路子自己用 `detached+unref` 实现，不能指望 Cursor 自带。
+- 没有本地后台/异步机制——文档提到的"Cloud Agents"是完全不同的远程托管执行方式（且只在交互模式下用 `&` 前缀触发，headless 文档里没提怎么从 `-p` 触发），不是本地 spawn，Sprint 3 如果要做后台模式，还是得照 Sprint 2 的路子自己用 `detached+unref` 实现，不能指望 Cursor 自带。
+
+### 6.7 只读调研场景推荐用 `--mode ask`，而不是裸 `-p`
+
+官方文档明确有一个 `--mode ask`："Ask mode to explore code without making changes. The agent searches your codebase and provides answers without editing files."——这是专门为只读探索设计的模式。裸 `-p`（不加 `--force`）虽然实测也不会真的落盘写文件，但官方定位是"提议但不应用"，防御层级比 `ask` 模式弱一层。**Sprint 3 的 `/cursor:research` 建议默认带上 `--mode ask`**，而不是依赖"不给 --force 所以不会写文件"这种消极默认值。
+权限还有一层更细的机制——`~/.cursor/cli-config.json` / `<project>/.cursor/cli.json` 里可以配 `Shell()`/`Read()`/`Write()`/`WebFetch()`/`Mcp()` 白名单——但这是配置文件级别的机制，比 agy 的单一 flag 复杂得多。Sprint 3 的适配器不碰这个配置文件，只用命令行 flag，把这条记在这里供以后需要更细粒度权限时参考。
 
 ## 7. Sprint 3 之后的路线图（供后续接手人参考，不是现在要做的事）
 
