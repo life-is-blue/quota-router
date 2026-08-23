@@ -5,13 +5,13 @@
   },
   "metadata": {
     "description": "Router plugins for Claude Code to delegate tasks to local CLIs.",
-    "version": "0.1.0"
+    "version": "1.0.0"
   },
   "plugins": [
     {
       "name": "agy",
       "description": "Delegate research tasks to Antigravity CLI (agy) to save Opus quota.",
-      "version": "0.1.0",
+      "version": "1.0.0",
       "author": {
         "name": "quota-router"
       },
@@ -20,7 +20,7 @@
     {
       "name": "cursor",
       "description": "Delegate research tasks to Cursor CLI (agent) to save Opus quota.",
-      "version": "0.1.0",
+      "version": "1.0.0",
       "author": {
         "name": "quota-router"
       },
@@ -29,7 +29,7 @@
     {
       "name": "codebuddy",
       "description": "Delegate research tasks to codebuddy CLI to save Opus quota.",
-      "version": "0.1.0",
+      "version": "1.0.0",
       "author": {
         "name": "quota-router"
       },
