@@ -6,7 +6,7 @@
 
 `quota-router` 是一个独立的 Claude Code 插件仓库，让 Opus 5 作为主控，把调研 / 小改动 / 批量重构 / 对抗审查这些任务分流给本地已安装的 CLI（agy / Cursor CLI / codebuddy / 官方 Codex 插件），省 Opus 的调用额度。
 
-**现在到哪了（2026-08-23）**：三个 CLI 的**只读调研**都通了——`/agy:research`（含 `--background` + `/agy:status`）、`/cursor:research`、`/codebuddy:research`，`node --test tests/*.test.mjs` = 25 pass 0 fail 0 skip。**写文件的能力一个都还没做**（每个 Sprint 都主动收窄掉了），下一步该干什么见第 7 节。
+**现在到哪了（2026-08-24，主体完工）**：三个 CLI 只读调研全通（`/agy:research` 含 `--background` + `/agy:status`、`/cursor:research`、`/codebuddy:research`），写能力有 `/cursor:implement`（单文件，`--trust` 最小权限 + 部分成功 warning），stderr 截断全覆盖，路由指引在 [README.md](README.md)。**34 pass 0 fail 0 skip**。唯一挂起项：codebuddy 后台（`--bg` 上游损坏，见 8.7）。怎么用看 README，接下来干什么看第 7 节。
 
 **和 `codex-plugin-cc` 的关系**：只读参照物，不 fork、不改它的代码。原因见下方"已验证的事实"。这个仓库独立存在，自己有一份 `marketplace.json`。
 
@@ -185,7 +185,7 @@ agent -p "<prompt>" --output-format json
 - **A. 写能力（价值最高，契约调研已完成 → 见第 9 节）**：Sprint 3/4 各自收窄掉的写文件能力，一直没做。三个 CLI 只读调研全通了，但省 Opus 额度最狠的场景是"小改动/批量重构"，那必须能写文件。**做 cursor 的**（写路径已实测，第 9 节）。三条结论决定了任务书长什么样：①失败信号比只读干净（不给 `--force` 是硬失败 exit 1，不是假成功），Sprint 3 的判断逻辑可直接复用；②第一道门是 **Workspace Trust**（目录级），stderr 必须透传；③**JSON 里没有任何改动清单**，改了哪些文件只在自然语言里，所以**必须在适配器外看磁盘核实**。测试只准动隔离 fixture（9.5 节）。
 - **B. codebuddy 后台模式（已调研，2026-08-24 挂起）**：唯一自带后台的（`--bg`/`--name`/`ps`/`logs`/`kill`）。**实测 `--bg` 在本机 `2.137.1` 上功能性损坏**（模型回复不落盘、文件不改、会话空转，两次复现，详见 8.7 节），等上游修复后重测；重测通过前不做。届时也别照搬 Sprint 2 给 agy 手写的 job-store，先实测原生那套够不够用。
 - **C. cursor/agy 的 stderr 截断**：codebuddy 有、另两个没有。一个 CLI 吐几百 KB stderr 就会把主会话上下文冲掉。**这条最小、最实用**，但不许借它顺手建 `lib/`（见 7.1）。
-- **D. 路由策略**：什么任务分给哪个 CLI。**永远留在 Claude 侧的 prompt/markdown 里，不写进插件代码。**
+- **D. 路由策略（已完成，2026-08-24）**：写在 [README.md](README.md) 的路由表里（基于四个 Sprint 的实测耗时/输出画像：codebuddy 快答 2-4s、agy 深度调研 ~110-130s、cursor 质量最强但 ~235-320s），不进插件代码。**永远留在文档里。**
 
 ### 7.3 这个项目已经验证过的三条判断（别推翻，除非有新实测）
 
