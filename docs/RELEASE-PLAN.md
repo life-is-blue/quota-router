@@ -26,20 +26,16 @@
 
 ## 分批方案
 
-### 批次 1：GitHub 发布包（机械活，我直接写，不走自建）
+### 批次 1：GitHub 发布包（✅ 已完成 2026-08-24，commit `4bba5af`，范围按领导裁决收窄）
 
-范围：G2 + G3 + G5。
+范围：G2 + G3（部分）。**G5（LICENSE/NOTICE）按领导裁决暂缓**；README 安装段保持占位地址。
 
-1. `.github/workflows/ci.yml`：PR 触发、node 24（本机实测版本）、`npm test`、10 分钟超时。照抄官方结构但**去掉** `npm ci`（我们零依赖，无 lockfile 生成负担）和 build 步骤（无 tsc）。
-2. `LICENSE`（Apache-2.0，全文）+ 各插件 NOTICE（版权人写"quota-router contributors"）。
-3. `package.json` 补 `license`、`engines: {node: ">=18"}`（官方同款下限）。
-4. 版本走 **1.0.0**：三个 plugin.json + marketplace.json metadata + package.json 五处统一。理由：主体功能完工、34 测试全绿、六轮独立验收，配得上 1.0.0；停在 0.x 反而暗示不可用。
-5. `CHANGELOG.md`：从 git log 提炼六个里程碑（Sprint 1–4 / A / C），每条一句话 + commit 引用。
-6. bump-version 小脚本（可选）：官方那个要同步 package-lock，我们没有 lockfile，**先手改五处 + CI 校验一致性**即可，不预建工具。
+已交付：
+1. `.github/workflows/ci.yml`：PR + push main 双触发、node 24、`npm test`、10 分钟超时。无 `npm ci`（零依赖）、无 build 步骤。CI 零 CLI 依赖（干净环境实测 34 pass）。
+2. 版本统一 **1.0.0**：3× plugin.json + marketplace（metadata + entries）+ package.json 共五处；`package.json` 补 `license: Apache-2.0`、`engines.node >=18`。`claude plugin validate .` 通过。
+3. `CHANGELOG.md`：六个里程碑提炼，契约实测发现作为一等公民呈现。
 
-验收：`git status` 干净；CI 配置语法 `node -e` 能 parse（或首推后看 Actions 跑绿）；五处版本号一致；README 安装段占位符替换决策留给用户。
-
-**风险**：无实质风险。唯一注意点：CI 里 `node --test tests/*.test.mjs` 的 glob 由 shell 展开，actions 默认 bash 没问题。
+暂缓项（推 GitHub 时再决定）：LICENSE/NOTICE 文件（`license` 字段已先行声明 Apache-2.0）、README 占位 org 替换、bump-version 工具。
 
 ### 批次 2：`/quota:setup`（体验活，走任务书自建）
 
