@@ -1,8 +1,28 @@
 #!/usr/bin/env node
 
 import { spawn } from 'node:child_process';
+import crypto from 'node:crypto';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
+import {
+  resolveJobsDir,
+  getJobFilePath,
+  readJob,
+  writeJob,
+  listJobs,
+  isProcessAlive,
+  formatJobStatus,
+} from './job-store.mjs';
+
+export {
+  resolveJobsDir,
+  getJobFilePath,
+  readJob,
+  writeJob,
+  listJobs,
+  isProcessAlive,
+  formatJobStatus,
+};
 
 /**
  * Execute research prompt via agy headless CLI.
@@ -118,20 +138,150 @@ export function runAgyResearch(prompt, options = {}) {
 }
 
 /**
+ * Handle worker execution in background child process.
+ *
+ * @param {string} jobId
+ * @param {string} prompt
+ */
+async function runWorker(jobId, prompt) {
+  try {
+    const result = await runAgyResearch(prompt);
+    const existing = readJob(jobId) || { id: jobId, prompt, startedAt: new Date().toISOString() };
+    writeJob({
+      ...existing,
+      status: 'done',
+      conversationId: result.conversation_id || existing.conversationId || null,
+      finishedAt: new Date().toISOString(),
+      response: result.response || '',
+      error: null,
+    });
+  } catch (err) {
+    const existing = readJob(jobId) || { id: jobId, prompt, startedAt: new Date().toISOString() };
+    writeJob({
+      ...existing,
+      status: 'error',
+      conversationId: err.raw?.conversation_id || existing.conversationId || null,
+      finishedAt: new Date().toISOString(),
+      response: null,
+      error: err.message || String(err),
+    });
+  }
+}
+
+/**
  * CLI Entry point
  */
 export async function main(argv = process.argv.slice(2)) {
-  let args = [...argv];
+  const args = [...argv];
+
+  // Internal worker mode
+  if (args[0] === '--worker') {
+    const jobId = args[1];
+    const prompt = args.slice(2).join(' ').trim();
+    if (!jobId || !prompt) {
+      process.exit(1);
+    }
+    await runWorker(jobId, prompt);
+    process.exit(0);
+  }
+
+  // Status command
+  if (args[0] === 'status') {
+    const jobId = args.slice(1).join(' ').trim();
+    if (jobId) {
+      const job = readJob(jobId);
+      if (!job) {
+        console.error(`Error: Job '${jobId}' not found.`);
+        process.exit(1);
+      }
+      const displayStatus = formatJobStatus(job);
+      console.log(`Job ID: ${job.id}`);
+      console.log(`Status: ${displayStatus}`);
+      console.log(`Prompt: ${job.prompt}`);
+      if (job.pid) console.log(`PID: ${job.pid}`);
+      if (job.conversationId) console.log(`Conversation ID: ${job.conversationId}`);
+      if (job.startedAt) console.log(`Started: ${job.startedAt}`);
+      if (job.finishedAt) console.log(`Finished: ${job.finishedAt}`);
+      if (job.status === 'done') {
+        console.log(`\nResponse:\n${job.response || '(empty response)'}`);
+      } else if (job.status === 'error') {
+        console.log(`\nError:\n${job.error || '(unknown error)'}`);
+      }
+      return;
+    }
+
+    const jobs = listJobs();
+    if (jobs.length === 0) {
+      console.log('No background jobs found.');
+      return;
+    }
+    const recent = jobs.slice(0, 10);
+    console.log(`Recent jobs (${recent.length}/${jobs.length}):\n`);
+    for (const job of recent) {
+      const displayStatus = formatJobStatus(job);
+      const shortPrompt = job.prompt.length > 50 ? job.prompt.slice(0, 47) + '...' : job.prompt;
+      console.log(`- [${displayStatus}] ${job.id} (${job.startedAt || 'unknown time'})`);
+      console.log(`  Prompt: ${shortPrompt}`);
+    }
+    return;
+  }
+
+  // Handle research / default command
   if (args[0] === 'research') {
     args.shift();
   }
 
-  const prompt = args.join(' ').trim();
+  // Check background flag
+  let isBackground = false;
+  const filteredArgs = [];
+  for (const arg of args) {
+    if (arg === '--background' || arg === '-b') {
+      isBackground = true;
+    } else {
+      filteredArgs.push(arg);
+    }
+  }
+
+  const prompt = filteredArgs.join(' ').trim();
   if (!prompt) {
-    console.error('Usage: agy-cli.mjs [research] <prompt>');
+    console.error('Usage: agy-cli.mjs [research] [--background] <prompt> | agy-cli.mjs status [job-id]');
     process.exit(1);
   }
 
+  if (isBackground) {
+    const jobId = crypto.randomUUID();
+    const job = {
+      id: jobId,
+      prompt,
+      status: 'running',
+      pid: null,
+      conversationId: null,
+      startedAt: new Date().toISOString(),
+      finishedAt: null,
+      response: null,
+      error: null,
+    };
+    writeJob(job);
+
+    const currentScript = fileURLToPath(import.meta.url);
+    const child = spawn(process.execPath, [currentScript, '--worker', jobId, prompt], {
+      detached: true,
+      stdio: 'ignore',
+      env: {
+        ...process.env,
+      },
+    });
+    child.unref();
+
+    job.pid = child.pid;
+    writeJob(job);
+
+    console.log(`Job started in background: ${jobId}`);
+    console.log(`Use '/agy:status ${jobId}' to check results.`);
+    return;
+  }
+
+  // Foreground mode
   try {
     const result = await runAgyResearch(prompt);
     if (result.warnings && result.warnings.length > 0) {

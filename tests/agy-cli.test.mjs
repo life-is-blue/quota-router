@@ -1,8 +1,11 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { readJob, writeJob } from '../plugins/agy/scripts/job-store.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -105,5 +108,128 @@ describe('agy-cli adapter', () => {
       /not found|ENOENT/i,
       'Output must clearly report that agy was not found'
     );
+  });
+
+  it('5. --background returns immediately (<2s) and spawns worker', async () => {
+    const testDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-bg-test-'));
+    try {
+      const startTime = Date.now();
+      const result = await runCli(['research', '--background', 'explain git rebase'], {
+        CLAUDE_PLUGIN_DATA: testDataDir,
+        AGY_BIN: FAKE_AGY_BIN,
+        FAKE_AGY_SCENARIO: 'SUCCESS',
+      });
+      const elapsedMs = Date.now() - startTime;
+
+      assert.equal(result.code, 0, 'Exit code should be 0 on background spawn');
+      assert.ok(elapsedMs < 2000, `Background launch must return quickly (<2s), took ${elapsedMs}ms`);
+
+      const uuidMatch = result.stdout.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
+      assert.ok(uuidMatch, 'Output must include a valid job UUID');
+      const jobId = uuidMatch[0];
+
+      // Wait for the background worker to finish writing the done record
+      process.env.CLAUDE_PLUGIN_DATA = testDataDir;
+      let finishedJob = null;
+      for (let i = 0; i < 40; i++) {
+        const current = readJob(jobId);
+        if (current && (current.status === 'done' || current.status === 'error')) {
+          finishedJob = current;
+          break;
+        }
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      delete process.env.CLAUDE_PLUGIN_DATA;
+
+      assert.ok(finishedJob, 'Worker must finish and record done status');
+      assert.equal(finishedJob.status, 'done');
+      assert.match(
+        finishedJob.response,
+        /Git rebase reapplies commits on top of another base branch/
+      );
+    } finally {
+      fs.rmSync(testDataDir, { recursive: true, force: true });
+    }
+  });
+
+  it('6. status command displays done job details', async () => {
+    const testDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-status-test-'));
+    try {
+      process.env.CLAUDE_PLUGIN_DATA = testDataDir;
+      const job = {
+        id: 'job-status-done-001',
+        prompt: 'test status done',
+        status: 'done',
+        pid: 12345,
+        conversationId: 'fake-conv-done',
+        startedAt: new Date().toISOString(),
+        finishedAt: new Date().toISOString(),
+        response: 'All tasks completed successfully.',
+        error: null,
+      };
+      writeJob(job);
+      delete process.env.CLAUDE_PLUGIN_DATA;
+
+      const result = await runCli(['status', 'job-status-done-001'], {
+        CLAUDE_PLUGIN_DATA: testDataDir,
+      });
+
+      assert.equal(result.code, 0);
+      assert.match(result.stdout, /Status: done/);
+      assert.match(result.stdout, /All tasks completed successfully\./);
+    } finally {
+      fs.rmSync(testDataDir, { recursive: true, force: true });
+    }
+  });
+
+  it('7. status command reports non-existent job ID with error without crashing', async () => {
+    const testDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-status-err-'));
+    try {
+      const result = await runCli(['status', 'non-existent-id-999'], {
+        CLAUDE_PLUGIN_DATA: testDataDir,
+      });
+
+      assert.notEqual(result.code, 0, 'Exit code should be non-zero on non-existent job ID');
+      assert.match(result.combined, /not found/i);
+    } finally {
+      fs.rmSync(testDataDir, { recursive: true, force: true });
+    }
+  });
+
+  it('8. status command detects dead worker process for running job', async () => {
+    const testDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-dead-test-'));
+    try {
+      process.env.CLAUDE_PLUGIN_DATA = testDataDir;
+      const deadPid = 9999999;
+      const job = {
+        id: 'job-dead-worker-002',
+        prompt: 'test dead process',
+        status: 'running',
+        pid: deadPid,
+        conversationId: null,
+        startedAt: new Date().toISOString(),
+        finishedAt: null,
+        response: null,
+        error: null,
+      };
+      writeJob(job);
+      delete process.env.CLAUDE_PLUGIN_DATA;
+
+      const result = await runCli(['status', 'job-dead-worker-002'], {
+        CLAUDE_PLUGIN_DATA: testDataDir,
+      });
+
+      assert.equal(result.code, 0);
+      assert.match(result.stdout, /进程已消失，状态未知/);
+
+      // Verify list format also shows this annotation
+      const listResult = await runCli(['status'], {
+        CLAUDE_PLUGIN_DATA: testDataDir,
+      });
+      assert.equal(listResult.code, 0);
+      assert.match(listResult.stdout, /进程已消失，状态未知/);
+    } finally {
+      fs.rmSync(testDataDir, { recursive: true, force: true });
+    }
   });
 });
