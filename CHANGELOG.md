@@ -21,7 +21,7 @@
 ### 工程
 
 - stderr / Raw output 统一 2000 字符截断，关键词扫描仍在完整文本上进行（Sprint C）
-- 34 个测试全绿，全部走 fake binary fixture，CI 零 CLI 依赖
+- 34 个测试全绿；CLI 测试使用 fake binary fixture，测试套件不依赖真实 CLI（CI 零 CLI 依赖）
 - 路由指引（何时用哪个引擎）见 [README.md](README.md)，基于实测耗时画像
 
 ### 开发方法
