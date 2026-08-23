@@ -120,6 +120,13 @@ switch (scenario) {
     break;
   }
 
+  case 'HUGE_BAD_JSON': {
+    // exit 0 + ≥5000 bytes of invalid JSON → parse-fail Error.message must truncate Raw output.
+    process.stdout.write('{' + 'z'.repeat(5000));
+    process.exit(0);
+    break;
+  }
+
   default: {
     process.stderr.write(`Unknown fake scenario: ${scenario}\n`);
     process.exit(2);

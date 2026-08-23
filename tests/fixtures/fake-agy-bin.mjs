@@ -68,6 +68,13 @@ switch (scenario) {
     break;
   }
 
+  case 'HUGE_STDERR': {
+    // Empty stdout + ≥5000-char stderr → adapter must truncate Error.message embed.
+    process.stderr.write('X'.repeat(5000) + '\n');
+    process.exit(1);
+    break;
+  }
+
   default: {
     process.stderr.write(`Unknown fake scenario: ${scenario}\n`);
     process.exit(2);

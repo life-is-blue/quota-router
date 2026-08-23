@@ -14,6 +14,14 @@ import {
   formatJobStatus,
 } from './job-store.mjs';
 
+const MAX_STDERR_TRUNCATE = 2000;
+
+/** Truncate text embedded into Error/warning messages only (head kept). */
+function truncateForEmbed(text) {
+  if (!text || text.length <= MAX_STDERR_TRUNCATE) return text || '';
+  return text.slice(0, MAX_STDERR_TRUNCATE) + '…(truncated)';
+}
+
 export {
   resolveJobsDir,
   getJobFilePath,
@@ -83,12 +91,14 @@ export function runAgyResearch(prompt, options = {}) {
 
     child.on('close', (code) => {
       const trimmedStdout = stdoutData.trim();
+      // Keep full stderr for soft-deny scan; truncate only when embedding into messages.
       const trimmedStderr = stderrData.trim();
+      const stderrForEmbed = truncateForEmbed(trimmedStderr);
 
       if (!trimmedStdout) {
         return reject(
           new Error(
-            `agy exited with code ${code} and produced no stdout. stderr: ${trimmedStderr || '(empty)'}`
+            `agy exited with code ${code} and produced no stdout. stderr: ${stderrForEmbed || '(empty)'}`
           )
         );
       }
@@ -99,22 +109,23 @@ export function runAgyResearch(prompt, options = {}) {
       } catch (parseErr) {
         return reject(
           new Error(
-            `Failed to parse agy JSON output: ${parseErr.message}\nRaw output: ${trimmedStdout}\nstderr: ${trimmedStderr}`
+            `Failed to parse agy JSON output: ${parseErr.message}\nRaw output: ${truncateForEmbed(trimmedStdout)}\nstderr: ${stderrForEmbed}`
           )
         );
       }
 
       const warnings = [];
       const softDenyPattern = /denied|not allowed/i;
+      // Scan full stderr first; embed truncated copy only.
       if (softDenyPattern.test(trimmedStderr)) {
-        warnings.push(`Warning (soft-deny detected in stderr): ${trimmedStderr}`);
+        warnings.push(`Warning (soft-deny detected in stderr): ${stderrForEmbed}`);
       }
 
       // Check status field as single source of truth for success/failure
       if (parsed.status !== 'SUCCESS') {
         const errorDetail =
           parsed.error ||
-          trimmedStderr ||
+          stderrForEmbed ||
           `agy run ended with status '${parsed.status}' (exit code ${code})`;
         const runErr = new Error(errorDetail);
         runErr.status = parsed.status;

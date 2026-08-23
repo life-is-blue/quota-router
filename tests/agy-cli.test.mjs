@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readJob, writeJob } from '../plugins/agy/scripts/job-store.mjs';
+import { runAgyResearch } from '../plugins/agy/scripts/agy-cli.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -230,6 +231,26 @@ describe('agy-cli adapter', () => {
       assert.match(listResult.stdout, /进程已消失，状态未知/);
     } finally {
       fs.rmSync(testDataDir, { recursive: true, force: true });
+    }
+  });
+
+  it('9. HUGE_STDERR: ≥5000-char stderr is truncated in Error.message (<3000)', async () => {
+    const prev = process.env.FAKE_AGY_SCENARIO;
+    process.env.FAKE_AGY_SCENARIO = 'HUGE_STDERR';
+    try {
+      await assert.rejects(
+        () => runAgyResearch('huge stderr', { agyBin: FAKE_AGY_BIN }),
+        (err) => {
+          assert.ok(
+            err.message.length < 3000,
+            `Error.message length ${err.message.length} must be < 3000`
+          );
+          return true;
+        }
+      );
+    } finally {
+      if (prev === undefined) delete process.env.FAKE_AGY_SCENARIO;
+      else process.env.FAKE_AGY_SCENARIO = prev;
     }
   });
 });

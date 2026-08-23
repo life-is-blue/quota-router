@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { runCursorResearch } from '../plugins/cursor/scripts/cursor-cli.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -115,5 +116,29 @@ describe('cursor-cli adapter', () => {
       /Warning.*incomplete|blocked\|rejected\|denied/i,
       'Must surface warning for blocked|rejected|denied in result'
     );
+  });
+
+  it('5. HUGE_STDERR: ≥5000-char stderr truncated in Error.message (<3000)', async () => {
+    const prev = process.env.FAKE_CURSOR_SCENARIO;
+    process.env.FAKE_CURSOR_SCENARIO = 'HUGE_STDERR';
+    try {
+      await assert.rejects(
+        () =>
+          runCursorResearch('huge stderr', {
+            agentBin: FAKE_CURSOR_BIN,
+            timeoutMs: 10000,
+          }),
+        (err) => {
+          assert.ok(
+            err.message.length < 3000,
+            `Error.message length ${err.message.length} must be < 3000`
+          );
+          return true;
+        }
+      );
+    } finally {
+      if (prev === undefined) delete process.env.FAKE_CURSOR_SCENARIO;
+      else process.env.FAKE_CURSOR_SCENARIO = prev;
+    }
   });
 });

@@ -124,9 +124,13 @@ export function runCodebuddyResearch(prompt, options = {}) {
       try {
         parsed = JSON.parse(trimmedStdout);
       } catch (parseErr) {
+        const rawForEmbed =
+          trimmedStdout.length > MAX_STDERR_TRUNCATE
+            ? trimmedStdout.slice(0, MAX_STDERR_TRUNCATE) + '…(truncated)'
+            : trimmedStdout;
         return reject(
           new Error(
-            `codebuddy 输出不是合法 JSON（可能失败）。parse 失败: ${parseErr.message}\nRaw output: ${trimmedStdout}\nstderr: ${trimmedStderr || '(empty)'}`
+            `codebuddy 输出不是合法 JSON（可能失败）。parse 失败: ${parseErr.message}\nRaw output: ${rawForEmbed}\nstderr: ${trimmedStderr || '(empty)'}`
           )
         );
       }

@@ -7,7 +7,15 @@ import { fileURLToPath } from 'node:url';
 const DEFAULT_TIMEOUT_MS = 180000;
 const DEFAULT_IMPLEMENT_TIMEOUT_MS = 300000;
 const SIGKILL_GRACE_MS = 2000;
+const MAX_STDERR_TRUNCATE = 2000;
 const SOFT_DENY_PATTERN = /blocked|rejected|denied/i;
+
+/** Truncate text embedded into Error messages only (head kept). */
+function truncateForEmbed(text) {
+  if (!text || text.length <= MAX_STDERR_TRUNCATE) return text || '';
+  return text.slice(0, MAX_STDERR_TRUNCATE) + '…(truncated)';
+}
+
 /** Partial-success trap (GOAL.md §9.5): agent may write guessed results after shell was blocked. */
 const IMPLEMENT_PARTIAL_PATTERN =
   /被拒绝|无法执行|未能实际执行|跳过|blocked|rejected|denied|skipped/i;
@@ -94,11 +102,12 @@ export function runCursorResearch(prompt, options = {}) {
 
       const trimmedStdout = stdoutData.trim();
       const trimmedStderr = stderrData.trim();
+      const stderrForEmbed = truncateForEmbed(trimmedStderr);
 
       if (timedOut) {
         return reject(
           new Error(
-            `Cursor CLI timed out after ${timeoutMs}ms (process killed). stderr: ${trimmedStderr || '(empty)'}`
+            `Cursor CLI timed out after ${timeoutMs}ms (process killed). stderr: ${stderrForEmbed || '(empty)'}`
           )
         );
       }
@@ -107,7 +116,7 @@ export function runCursorResearch(prompt, options = {}) {
       if (code !== 0 || !trimmedStdout) {
         return reject(
           new Error(
-            `agent exited with code ${code} and produced ${trimmedStdout ? 'stdout but non-zero exit' : 'no stdout'}. stderr: ${trimmedStderr || '(empty)'}`
+            `agent exited with code ${code} and produced ${trimmedStdout ? 'stdout but non-zero exit' : 'no stdout'}. stderr: ${stderrForEmbed || '(empty)'}`
           )
         );
       }
@@ -118,7 +127,7 @@ export function runCursorResearch(prompt, options = {}) {
       } catch (parseErr) {
         return reject(
           new Error(
-            `Failed to parse agent JSON output: ${parseErr.message}\nRaw output: ${trimmedStdout}\nstderr: ${trimmedStderr}`
+            `Failed to parse agent JSON output: ${parseErr.message}\nRaw output: ${truncateForEmbed(trimmedStdout)}\nstderr: ${stderrForEmbed}`
           )
         );
       }
@@ -233,11 +242,12 @@ export function runCursorImplement(prompt, options = {}) {
 
       const trimmedStdout = stdoutData.trim();
       const trimmedStderr = stderrData.trim();
+      const stderrForEmbed = truncateForEmbed(trimmedStderr);
 
       if (timedOut) {
         return reject(
           new Error(
-            `Cursor CLI timed out after ${timeoutMs}ms (process killed). stderr: ${trimmedStderr || '(empty)'}`
+            `Cursor CLI timed out after ${timeoutMs}ms (process killed). stderr: ${stderrForEmbed || '(empty)'}`
           )
         );
       }
@@ -246,7 +256,7 @@ export function runCursorImplement(prompt, options = {}) {
       if (code !== 0 || !trimmedStdout) {
         return reject(
           new Error(
-            `agent exited with code ${code} and produced ${trimmedStdout ? 'stdout but non-zero exit' : 'no stdout'}. stderr: ${trimmedStderr || '(empty)'}`
+            `agent exited with code ${code} and produced ${trimmedStdout ? 'stdout but non-zero exit' : 'no stdout'}. stderr: ${stderrForEmbed || '(empty)'}`
           )
         );
       }
@@ -257,7 +267,7 @@ export function runCursorImplement(prompt, options = {}) {
       } catch (parseErr) {
         return reject(
           new Error(
-            `Failed to parse agent JSON output: ${parseErr.message}\nRaw output: ${trimmedStdout}\nstderr: ${trimmedStderr}`
+            `Failed to parse agent JSON output: ${parseErr.message}\nRaw output: ${truncateForEmbed(trimmedStdout)}\nstderr: ${stderrForEmbed}`
           )
         );
       }

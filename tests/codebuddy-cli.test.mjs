@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { runCodebuddyResearch } from '../plugins/codebuddy/scripts/codebuddy-cli.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -153,5 +154,29 @@ describe('codebuddy-cli adapter', () => {
       elapsed >= testTimeoutMs,
       `Should wait at least timeout (${testTimeoutMs}ms), took ${elapsed}ms`
     );
+  });
+
+  it('7. HUGE_BAD_JSON: ≥5000-byte bad JSON truncates Error.message (<3000)', async () => {
+    const prev = process.env.FAKE_CODEBUDDY_SCENARIO;
+    process.env.FAKE_CODEBUDDY_SCENARIO = 'HUGE_BAD_JSON';
+    try {
+      await assert.rejects(
+        () =>
+          runCodebuddyResearch('huge bad json', {
+            codebuddyBin: FAKE_CODEBUDDY_BIN,
+            timeoutMs: 10000,
+          }),
+        (err) => {
+          assert.ok(
+            err.message.length < 3000,
+            `Error.message length ${err.message.length} must be < 3000`
+          );
+          return true;
+        }
+      );
+    } finally {
+      if (prev === undefined) delete process.env.FAKE_CODEBUDDY_SCENARIO;
+      else process.env.FAKE_CODEBUDDY_SCENARIO = prev;
+    }
   });
 });

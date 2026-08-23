@@ -74,6 +74,13 @@ switch (scenario) {
     break;
   }
 
+  case 'HUGE_STDERR': {
+    // exit 1 + empty stdout + ≥5000-char stderr (research hard-fail path).
+    process.stderr.write('Y'.repeat(5000) + '\n');
+    process.exit(1);
+    break;
+  }
+
   default: {
     process.stderr.write(`Unknown fake scenario: ${scenario}\n`);
     process.exit(2);
