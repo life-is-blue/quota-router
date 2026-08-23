@@ -1,0 +1,8 @@
+{
+  "name": "codebuddy",
+  "version": "0.1.0",
+  "description": "Delegate research tasks to codebuddy CLI to save Opus quota.",
+  "author": {
+    "name": "quota-router"
+  }
+}

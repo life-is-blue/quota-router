@@ -25,6 +25,15 @@
         "name": "quota-router"
       },
       "source": "./plugins/cursor"
+    },
+    {
+      "name": "codebuddy",
+      "description": "Delegate research tasks to codebuddy CLI to save Opus quota.",
+      "version": "0.1.0",
+      "author": {
+        "name": "quota-router"
+      },
+      "source": "./plugins/codebuddy"
     }
   ]
 }
