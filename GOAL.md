@@ -409,3 +409,17 @@ Sprint 1–4 都是"让 CLI 拿任务书改 quota-router 自己"。只读适配�
 **结论：agy headless 的写用户文件路径在设计上就是断的，两档都不通。**默认档的拒绝是干净信号（CANCELED + stderr 明示），skip 档则产生 GOAL.md 3.4 第 5 条坑的最完整形态：status ERROR 但 response 里带着完整正确的修改后代码。
 
 **可行路线（未实现，记在这里）**：「apply 模式」——让 agy 输出修改后的完整文件内容或 diff（它自然会放进 response），由调用方负责落盘。安全性反而更好（agy 全程只读，落盘权在 Claude 侧），且和 cursor implement 的「部分成功陷阱」正交。**若做 `/agy:implement`，契约应设计成 apply 模式，不要尝试让 agy 直接写文件。**
+
+### 11.1 apply 模式可行路径实测（Codex 评审驱动的补充调研，2026-08-24）
+
+1.1.0 规划评审（Codex NO-GO，第 5 条）指出 11 节的矛盾：`ERROR + response` 只在 `--dangerously-skip-permissions` 路径出现过，不能当默认路径的成功契约。追加三次探针补全：
+
+| 探针 | 场景 | 结果 |
+| --- | --- | --- |
+| C | 默认权限 + prompt 明说「不要写文件」，目录不在 trustedWorkspaces | **CANCELED**——agy 的读文件工具也走 command 权限审批，headless 无法弹窗即 auto-denied（连读都做不了） |
+| D | 尝试 `--allowed-tools` flag | 不存在该 flag（exit 2）。CLI 层只有两档：默认 / `--dangerously-skip-permissions` |
+| E | 默认权限 + prompt 声明只输出不修改 + **目录在 trustedWorkspaces**（`~/.gemini/antigravity-cli/settings.json`） | **SUCCESS**，response 含完整正确的修改后文件内容（markdown 围栏），原文件 md5 不变 |
+
+**定论**：apply 模式可行的充要条件是 **工作目录在 agy 的 trustedWorkspaces 里**（用户真实场景本来如此）。此时 read_file 默认「Auto-allowed in workspace」，无需任何 flag。`ERROR + response` 降级为**防御性兼容分支**（万一上游行为漂移时不丢产物），不是主成功路径。
+
+**遗留限制（写进 /agy:implement 命令文档）**：①工作目录必须在 trustedWorkspaces（setup.md 的安装指引里提示 `agy` 交互模式首次使用会询问信任）；②response 里的代码围栏格式不保证稳定，插件不解析，Claude 侧落盘前必须向用户展示内容；③**CANCELED + auto-denied 要给用户可操作的指引**（把目录加入 trustedWorkspaces 或加 permissions.allow 规则），不是一句干巴巴的报错。
