@@ -18,7 +18,7 @@
 ## 安装
 
 ```bash
-claude plugin marketplace add <本仓库路径>
+claude plugin marketplace add life-is-blue/quota-router
 claude plugin install quota-router@agy quota-router@cursor quota-router@codebuddy quota-router@quota
 ```
 
