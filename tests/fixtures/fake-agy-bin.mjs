@@ -146,6 +146,56 @@ switch (scenario) {
     break;
   }
 
+  case 'IMPLEMENT_EMPTY_RESPONSE': {
+    const output = {
+      session_id: 'fake-session-implement-006',
+      status: 'SUCCESS',
+      response: '',
+      usage: { input_tokens: 50, output_tokens: 0, total_tokens: 50 },
+    };
+    process.stdout.write(JSON.stringify(output) + '\n');
+    process.exit(0);
+    break;
+  }
+
+  case 'IMPLEMENT_DELIMITER_COLLISION': {
+    // Content legitimately containing the delimiters: the first ===END===
+    // terminates the block early; a second orphan ===FILE: header follows.
+    const output = {
+      session_id: 'fake-session-implement-007',
+      status: 'SUCCESS',
+      response: '说明文字。\n===FILE: docs/demo.md===\n示例：===FILE: other.js===\n嵌套内容\n===END===\n后续残片 ===END===',
+      usage: { input_tokens: 60, output_tokens: 30, total_tokens: 90 },
+    };
+    process.stdout.write(JSON.stringify(output) + '\n');
+    process.exit(0);
+    break;
+  }
+
+  case 'IMPLEMENT_CRLF_AND_SPACES': {
+    const output = {
+      session_id: 'fake-session-implement-008',
+      status: 'SUCCESS',
+      response: 'CRLF 块。\r\n===FILE:   src/has space.js  ===\r\nconst x = 1;\r\n===END===',
+      usage: { input_tokens: 40, output_tokens: 20, total_tokens: 60 },
+    };
+    process.stdout.write(JSON.stringify(output) + '\n');
+    process.exit(0);
+    break;
+  }
+
+  case 'IMPLEMENT_EMPTY_BLOCK': {
+    const output = {
+      session_id: 'fake-session-implement-009',
+      status: 'SUCCESS',
+      response: '空块。\n===FILE: empty.js===\n===END===',
+      usage: { input_tokens: 30, output_tokens: 10, total_tokens: 40 },
+    };
+    process.stdout.write(JSON.stringify(output) + '\n');
+    process.exit(0);
+    break;
+  }
+
   default: {
     process.stderr.write(`Unknown fake scenario: ${scenario}\n`);
     process.exit(2);

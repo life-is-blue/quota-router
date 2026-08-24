@@ -158,7 +158,17 @@ function extractImplementFiles(response) {
   while ((match = fileBlockPattern.exec(response)) !== null) {
     files.push({ path: match[1].trim(), content: match[2] });
   }
-  return files.length > 0 ? files : null;
+  if (files.length === 0) return null;
+  // Delimiter-collision guard: '===END===' or '===FILE:' appearing inside a
+  // block's content means the regex terminated that block early (content
+  // silently truncated). Detect leftovers so callers get a warning instead
+  // of trusting a clipped extraction.
+  for (let i = 0; i < files.length; i++) {
+    if (/===END===|===FILE:/.test(files[i].content)) {
+      files[i].contentSuspect = true;
+    }
+  }
+  return files;
 }
 
 /**
@@ -238,7 +248,7 @@ export function runAgyImplement(prompt, options = {}) {
       if (parsed.status === 'CANCELED') {
         const detail = stderrForEmbed || parsed.error || 'agy run was canceled';
         const runErr = new Error(
-          `${detail}\n请先在交互模式运行一次 agy，将当前目录加入 trustedWorkspaces；然后在 ~/.gemini/antigravity-cli/settings.json 的 permissions.allow 中添加所需规则。`
+          `${detail}\n两个办法任选其一：①在交互模式运行一次 agy，把当前目录加入 trustedWorkspaces；②在 ~/.gemini/antigravity-cli/settings.json 的 permissions.allow 中添加所需规则。`
         );
         runErr.status = parsed.status;
         runErr.raw = parsed;
@@ -246,10 +256,25 @@ export function runAgyImplement(prompt, options = {}) {
         return reject(runErr);
       }
 
-      if (parsed.status !== 'SUCCESS' && !(parsed.status === 'ERROR' && response)) {
-        const detail = parsed.error || stderrForEmbed ||
-          `agy run ended with status '${parsed.status}' (exit code ${code})`;
-        const runErr = new Error(detail);
+      // Contract: SUCCESS requires a non-empty response; ERROR is only a
+      // defensive success when it carries a non-blank response.
+      const hasProduct = response.trim().length > 0;
+      if (!hasProduct) {
+        const runErr = new Error(
+          `${parsed.error || `agy run ended with status '${parsed.status}'`}\nstderr: ${stderrForEmbed || '(empty)'}`
+        );
+        runErr.status = parsed.status;
+        runErr.raw = parsed;
+        runErr.warnings = warnings;
+        return reject(runErr);
+      }
+
+      if (parsed.status !== 'SUCCESS' && parsed.status !== 'ERROR') {
+        const parts = [];
+        if (parsed.error) parts.push(parsed.error);
+        if (stderrForEmbed) parts.push(`stderr: ${stderrForEmbed}`);
+        if (!parts.length) parts.push(`agy run ended with status '${parsed.status}' (exit code ${code})`);
+        const runErr = new Error(parts.join('\n'));
         runErr.status = parsed.status;
         runErr.raw = parsed;
         runErr.warnings = warnings;
@@ -262,6 +287,8 @@ export function runAgyImplement(prompt, options = {}) {
       const files = extractImplementFiles(response);
       if (files === null) {
         warnings.push('未找到 FILE 块，response 原样返回');
+      } else if (files.some((f) => f.contentSuspect)) {
+        warnings.push('检测到 FILE 块内容中含 ===END===/===FILE: 字样，提取结果可能被截断——请以完整 response 为准');
       }
       return resolve({
         status: parsed.status,
@@ -412,7 +439,7 @@ export async function main(argv = process.argv.slice(2)) {
 
   const prompt = filteredArgs.join(' ').trim();
   if (!prompt) {
-    console.error('Usage: agy-cli.mjs [research] [--background] <prompt> | agy-cli.mjs status [job-id]');
+    console.error('Usage: agy-cli.mjs research [--background] <prompt> | agy-cli.mjs implement <instruction> | agy-cli.mjs status [job-id]');
     process.exit(1);
   }
 

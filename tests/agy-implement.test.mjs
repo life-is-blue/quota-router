@@ -108,4 +108,45 @@ describe('agy implement adapter', () => {
       );
     });
   });
+
+  it('8. SUCCESS with empty response is rejected (contract: SUCCESS requires non-empty response)', async () => {
+    await withEnv({ FAKE_AGY_SCENARIO: 'IMPLEMENT_EMPTY_RESPONSE' }, async () => {
+      await assert.rejects(
+        () => runAgyImplement('empty output', { agyBin: FAKE_AGY_BIN }),
+        (err) => {
+          assert.equal(err.status, 'SUCCESS'); // status field records the raw status
+          return true;
+        }
+      );
+    });
+  });
+
+  it('9. delimiter collision inside content → contentSuspect flag + warning, response intact', async () => {
+    await withEnv({ FAKE_AGY_SCENARIO: 'IMPLEMENT_DELIMITER_COLLISION' }, async () => {
+      const result = await runAgyImplement('collision demo', { agyBin: FAKE_AGY_BIN });
+      assert.equal(result.files.length, 1);
+      assert.equal(result.files[0].contentSuspect, true);
+      assert.match(result.warnings.join('\n'), /截断/);
+      // Full response is still available for manual inspection
+      assert.match(result.response, /后续残片/);
+    });
+  });
+
+  it('10. CRLF header and path with inner spaces are handled', async () => {
+    await withEnv({ FAKE_AGY_SCENARIO: 'IMPLEMENT_CRLF_AND_SPACES' }, async () => {
+      const result = await runAgyImplement('crlf demo', { agyBin: FAKE_AGY_BIN });
+      assert.equal(result.files.length, 1);
+      assert.equal(result.files[0].path, 'src/has space.js');
+      assert.equal(result.files[0].content, 'const x = 1;\r\n');
+    });
+  });
+
+  it('11. empty content block extracts as empty string, no suspect flag', async () => {
+    await withEnv({ FAKE_AGY_SCENARIO: 'IMPLEMENT_EMPTY_BLOCK' }, async () => {
+      const result = await runAgyImplement('empty block', { agyBin: FAKE_AGY_BIN });
+      assert.equal(result.files.length, 1);
+      assert.equal(result.files[0].content, '');
+      assert.equal(result.files[0].contentSuspect, undefined);
+    });
+  });
 });
