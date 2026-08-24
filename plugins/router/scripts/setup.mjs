@@ -149,9 +149,10 @@ function runProbe(bin, args, timeoutMs) {
 /** Extract a version-like token from CLI --version output. */
 function parseVersion(output) {
   if (!output) return null;
-  // Prefer dotted numeric tokens (e.g. 1.1.19, 0.149.0, 2026.08.11-e8db854).
+  // Only dotted numeric tokens count (e.g. 1.1.19, 0.149.0, 2026.08.11-e8db854).
+  // Error text like "Error: unsupported option" must NOT be reported as a version.
   const match = output.match(/(\d+\.\d+[\w.-]*)/);
-  return match ? match[1] : output.split(/\s+/)[0] || null;
+  return match ? match[1] : null;
 }
 
 function interpretLogin(output, loginProbe) {
@@ -211,15 +212,17 @@ export async function runSetupCheck(options = {}) {
       };
     }
 
-    // Spawned OK. Treat non-empty version-like output as installed.
+    // Spawned OK. Output must contain a version-like token to count as
+    // installed — error text ("Error: unsupported option") must not be
+    // misreported as an installed engine with a garbage version.
     const version = parseVersion(versionResult.output);
-    if (!versionResult.output) {
+    if (!version) {
       return {
         engine: spec.engine,
         installed: false,
         version: null,
         login: 'unknown',
-        detail: 'version probe produced empty output',
+        detail: `version probe produced no version-like output: ${versionResult.output.slice(0, 120)}`,
       };
     }
 
@@ -301,7 +304,8 @@ async function main() {
       `# Quota Router Setup\n\nCheck failed unexpectedly: ${err?.message || err}\n`
     );
   }
-  process.exit(0);
+  // Let stdout flush naturally instead of process.exit(), which can truncate
+  // output when piped (the plugin host captures via pipe).
 }
 
 const isDirectRun =

@@ -24,6 +24,7 @@ const FAKE_BINS = {
 };
 
 const SLEEP_BIN = path.join(FAKE_DIR, 'sleep-bin');
+const SLEEP_IGNORE_TERM_BIN = path.join(FAKE_DIR, 'sleep-ignore-term');
 
 /** Shared argv log for the whole suite — whitelist guard reads this. */
 const ARGV_LOG = path.join(
@@ -152,6 +153,31 @@ describe('setup readiness check', () => {
     assert.equal(byEngine.agy.installed, true);
     assert.equal(byEngine.cursor.installed, true);
     assert.equal(byEngine.codex.installed, true);
+  });
+
+  it('3b. SIGTERM-ignoring process is killed by SIGKILL escalation', async () => {
+    // sleep-ignore-term traps SIGTERM; only the second-stage SIGKILL can
+    // stop it. If the SIGKILL timer is ever removed from setup.mjs, this
+    // test hangs (and the suite timeout catches it) — proving the
+    // escalation chain's second stage actually fires.
+    const started = Date.now();
+    const rows = await runSetupCheck({
+      bins: {
+        ...FAKE_BINS,
+        codebuddy: SLEEP_IGNORE_TERM_BIN,
+      },
+      timeoutMs: 500,
+    });
+    const elapsed = Date.now() - started;
+
+    assert.ok(
+      elapsed < 8000,
+      `SIGKILL escalation must terminate a SIGTERM-ignoring process (elapsed ${elapsed}ms)`
+    );
+
+    const byEngine = Object.fromEntries(rows.map((r) => [r.engine, r]));
+    assert.equal(byEngine.codebuddy.installed, false);
+    assert.match(byEngine.codebuddy.detail, /timed out/i);
   });
 
   it('4. whitelist guard: codebuddy argv only ever --version', async () => {

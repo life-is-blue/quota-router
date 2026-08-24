@@ -19,14 +19,20 @@
 
 ```bash
 claude plugin marketplace add <本仓库路径>
-claude plugin install quota-router@agy quota-router@cursor quota-router@codebuddy
+claude plugin install quota-router@agy quota-router@cursor quota-router@codebuddy quota-router@quota
 ```
 
 前提：本机已安装并登录对应 CLI（`agy`、`agent`（Cursor CLI）、`codebuddy`）。缺哪个对应命令就不可用，报错信息会直说。审查场景继续用官方 [codex-plugin-cc](https://github.com/openai/codex-plugin-cc)——我们是它的补充而非替代。
 
+装完先跑 `/quota:setup`，一张表看清四个引擎（含 codex）装没装、登没登录。
+
 ## 命令与路由
 
-所有命令手动触发（`disable-model-invocation: true`），不经模型自动决策——**隐式调用外部 CLI 烧别人的额度，必须用户点头**。
+所有路由命令手动触发（`disable-model-invocation: true`），不经模型自动决策——**隐式调用外部 CLI 烧别人的额度，必须用户点头**。例外是 `/quota:setup`：纯诊断、零副作用（探测命令白名单硬编码，绝不对 codebuddy 传 `--version` 之外的参数——实测任何带参调用都会跑真 LLM 会话），允许模型按需调用。
+
+| 命令 | 引擎 | 什么时候用 | 实测耗时 |
+|---|---|---|---|
+| `/quota:setup` | - | 装完第一步：四引擎就绪表（安装/版本/登录） | ~2s |
 
 | 命令 | 引擎 | 什么时候用 | 实测耗时 |
 |---|---|---|---|
@@ -58,7 +64,7 @@ claude plugin install quota-router@agy quota-router@cursor quota-router@codebudd
 
 ## 参与建设
 
-**开发**：`node --test tests/*.test.mjs`，34 个测试全绿是唯一可接受状态。仓库结构一个引擎一个目录（`plugins/<engine>/`），互不依赖。
+**开发**：`node --test tests/*.test.mjs`，40 个测试全绿是唯一可接受状态。仓库结构一个引擎一个目录（`plugins/<engine>/`），互不依赖。
 
 **接新引擎**（我们最欢迎的贡献，流程不许跳步）：
 

@@ -1,0 +1,15 @@
+#!/usr/bin/env node
+/**
+ * Ignores SIGTERM — only SIGKILL can stop it.
+ * Verifies the SECOND stage of the timeout escalation chain: if the
+ * SIGKILL timer is ever removed, this fixture proves the suite would hang.
+ */
+process.on('SIGTERM', () => {
+  // deliberately ignore; keep sleeping
+});
+
+const ms = Number(process.env.FAKE_ENGINE_SLEEP_MS || 30000);
+setTimeout(() => {
+  process.stdout.write('should-never-appear\n');
+  process.exit(0);
+}, ms);
