@@ -1,0 +1,24 @@
+#!/usr/bin/env node
+/**
+ * Fake `agy` binary for setup readiness tests.
+ * Supports: --version only (whitelist).
+ * FAKE_ENGINE_SCENARIO=SLEEP → hang for FAKE_ENGINE_SLEEP_MS (default 30000).
+ */
+import process from 'node:process';
+
+const args = process.argv.slice(2);
+const scenario = process.env.FAKE_ENGINE_SCENARIO || 'OK';
+
+if (scenario === 'SLEEP') {
+  const ms = Number(process.env.FAKE_ENGINE_SLEEP_MS || 30000);
+  setTimeout(() => {
+    process.stdout.write('1.0.0-sleep\n');
+    process.exit(0);
+  }, ms);
+} else if (args.length === 1 && args[0] === '--version') {
+  process.stdout.write('9.9.9-fake-agy\n');
+  process.exit(0);
+} else {
+  process.stderr.write(`fake-agy: unexpected args: ${args.join(' ')}\n`);
+  process.exit(0); // mimic real agy: errors can still exit 0
+}

@@ -34,6 +34,15 @@
         "name": "quota-router"
       },
       "source": "./plugins/codebuddy"
+    },
+    {
+      "name": "quota",
+      "description": "Check readiness of quota-router engines (agy / cursor / codebuddy / codex).",
+      "version": "1.0.0",
+      "author": {
+        "name": "quota-router"
+      },
+      "source": "./plugins/router"
     }
   ]
 }

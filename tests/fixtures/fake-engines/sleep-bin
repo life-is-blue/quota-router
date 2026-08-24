@@ -1,0 +1,7 @@
+#!/usr/bin/env node
+/** Always sleeps — used to verify timeout kill does not hang the suite. */
+const ms = Number(process.env.FAKE_ENGINE_SLEEP_MS || 30000);
+setTimeout(() => {
+  process.stdout.write('should-never-appear\n');
+  process.exit(0);
+}, ms);

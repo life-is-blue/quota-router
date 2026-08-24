@@ -1,0 +1,52 @@
+#!/usr/bin/env node
+/**
+ * Fake `codebuddy` binary for setup readiness tests.
+ *
+ * CRITICAL whitelist guard: records every argv invocation to
+ * FAKE_CODEBUDDY_ARGV_LOG (append JSON lines). Tests assert only `--version`
+ * was ever received — never status/whoami/other.
+ *
+ * FAKE_ENGINE_SCENARIO=SLEEP → hang
+ * FAKE_CODEBUDDY_ALLOW_STATUS=1 → respond to `status` (for reverse verification only)
+ */
+import fs from 'node:fs';
+import process from 'node:process';
+
+const args = process.argv.slice(2);
+const logPath = process.env.FAKE_CODEBUDDY_ARGV_LOG;
+
+if (logPath) {
+  try {
+    fs.appendFileSync(logPath, JSON.stringify(args) + '\n');
+  } catch {
+    // ignore log write failures
+  }
+}
+
+const scenario = process.env.FAKE_ENGINE_SCENARIO || 'OK';
+
+if (scenario === 'SLEEP') {
+  const ms = Number(process.env.FAKE_ENGINE_SLEEP_MS || 30000);
+  setTimeout(() => {
+    process.stdout.write('0.0.0-sleep\n');
+    process.exit(0);
+  }, ms);
+} else if (args.length === 1 && args[0] === '--version') {
+  process.stdout.write('2.137.1-fake\n');
+  process.exit(0);
+} else if (
+  process.env.FAKE_CODEBUDDY_ALLOW_STATUS === '1' &&
+  args.length === 1 &&
+  args[0] === 'status'
+) {
+  // Reverse-verification only: proves a status branch CAN work when enabled.
+  process.stdout.write('fake-status-would-burn-tokens\n');
+  process.exit(0);
+} else {
+  // Mimic dangerous real behavior only in the sense of "accepted unknown args";
+  // do NOT call any LLM. Record and exit.
+  process.stderr.write(
+    `fake-codebuddy: non-whitelist args received: ${args.join(' ')}\n`
+  );
+  process.exit(0);
+}

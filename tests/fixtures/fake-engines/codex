@@ -1,0 +1,27 @@
+#!/usr/bin/env node
+/**
+ * Fake `codex` binary for setup readiness tests.
+ * Supports: --version | login status
+ * FAKE_ENGINE_SCENARIO=SLEEP → hang
+ */
+import process from 'node:process';
+
+const args = process.argv.slice(2);
+const scenario = process.env.FAKE_ENGINE_SCENARIO || 'OK';
+
+if (scenario === 'SLEEP') {
+  const ms = Number(process.env.FAKE_ENGINE_SLEEP_MS || 30000);
+  setTimeout(() => {
+    process.stdout.write('codex-cli 0.0.0-sleep\n');
+    process.exit(0);
+  }, ms);
+} else if (args.length === 1 && args[0] === '--version') {
+  process.stdout.write('codex-cli 0.149.0-fake\n');
+  process.exit(0);
+} else if (args.length === 2 && args[0] === 'login' && args[1] === 'status') {
+  process.stdout.write('Logged in using ChatGPT\n');
+  process.exit(0);
+} else {
+  process.stderr.write(`fake-codex: unexpected args: ${args.join(' ')}\n`);
+  process.exit(0);
+}

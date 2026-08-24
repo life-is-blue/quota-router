@@ -1,0 +1,8 @@
+{
+  "name": "quota",
+  "version": "1.0.0",
+  "description": "Check readiness of quota-router engines (agy / cursor / codebuddy / codex).",
+  "author": {
+    "name": "quota-router"
+  }
+}
