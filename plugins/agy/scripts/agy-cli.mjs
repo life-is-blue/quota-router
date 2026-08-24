@@ -148,6 +148,134 @@ export function runAgyResearch(prompt, options = {}) {
   });
 }
 
+const IMPLEMENT_INSTRUCTION =
+  '不要修改任何文件、不要调用写文件工具。阅读相关文件后，在回复末尾对每个要修改的文件输出：`===FILE: <相对路径>===` 一行，随后是完整修改后文件内容，`===END===` 结束。块外可有说明文字。';
+
+function extractImplementFiles(response) {
+  const files = [];
+  const fileBlockPattern = /===FILE:\s*(.+?)===\r?\n([\s\S]*?)===END===/g;
+  let match;
+  while ((match = fileBlockPattern.exec(response)) !== null) {
+    files.push({ path: match[1].trim(), content: match[2] });
+  }
+  return files.length > 0 ? files : null;
+}
+
+/**
+ * Ask agy for complete replacement contents without allowing it to write files.
+ *
+ * @param {string} prompt
+ * @param {object} [options]
+ * @param {string} [options.agyBin]
+ * @param {string} [options.timeout]
+ * @returns {Promise<{status: string, response: string, files: Array<{path: string, content: string}> | null, warnings: string[], session_id: string | undefined, usage: any, raw: any}>}
+ */
+export function runAgyImplement(prompt, options = {}) {
+  const agyBin = options.agyBin || process.env.AGY_BIN || 'agy';
+  const timeout = options.timeout || process.env.AGY_TIMEOUT || '3m';
+  const templatedPrompt = `${IMPLEMENT_INSTRUCTION}\n\n${prompt}`;
+  const args = [
+    '-p',
+    templatedPrompt,
+    '--output-format',
+    'json',
+    '--print-timeout',
+    timeout,
+  ];
+
+  return new Promise((resolve, reject) => {
+    let child;
+    try {
+      child = spawn(agyBin, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    } catch (err) {
+      return reject(err);
+    }
+
+    let stdoutData = '';
+    let stderrData = '';
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
+    child.stdout.on('data', (chunk) => { stdoutData += chunk; });
+    child.stderr.on('data', (chunk) => { stderrData += chunk; });
+
+    child.on('error', (err) => {
+      if (err.code === 'ENOENT') {
+        const enoentErr = new Error(
+          `Antigravity CLI ('${agyBin}') not found. Please verify that 'agy' is installed and in your PATH.`
+        );
+        enoentErr.code = 'ENOENT';
+        return reject(enoentErr);
+      }
+      return reject(err);
+    });
+
+    child.on('close', (code) => {
+      const trimmedStdout = stdoutData.trim();
+      const trimmedStderr = stderrData.trim();
+      const stderrForEmbed = truncateForEmbed(trimmedStderr);
+      if (!trimmedStdout) {
+        return reject(new Error(
+          `agy exited with code ${code} and produced no stdout. stderr: ${stderrForEmbed || '(empty)'}`
+        ));
+      }
+
+      let parsed;
+      try {
+        parsed = JSON.parse(trimmedStdout);
+      } catch (parseErr) {
+        return reject(new Error(
+          `Failed to parse agy JSON output: ${parseErr.message}\nRaw output: ${truncateForEmbed(trimmedStdout)}\nstderr: ${stderrForEmbed}`
+        ));
+      }
+
+      const response = parsed.response || '';
+      const warnings = [];
+      const permissionPattern = /权限不足|无法访问|被拒绝|auto-denied|denied|not allowed/i;
+      if (permissionPattern.test(trimmedStderr)) {
+        warnings.push(`Warning (permission issue detected in stderr): ${stderrForEmbed}`);
+      }
+
+      if (parsed.status === 'CANCELED') {
+        const detail = stderrForEmbed || parsed.error || 'agy run was canceled';
+        const runErr = new Error(
+          `${detail}\n请先在交互模式运行一次 agy，将当前目录加入 trustedWorkspaces；然后在 ~/.gemini/antigravity-cli/settings.json 的 permissions.allow 中添加所需规则。`
+        );
+        runErr.status = parsed.status;
+        runErr.raw = parsed;
+        runErr.warnings = warnings;
+        return reject(runErr);
+      }
+
+      if (parsed.status !== 'SUCCESS' && !(parsed.status === 'ERROR' && response)) {
+        const detail = parsed.error || stderrForEmbed ||
+          `agy run ended with status '${parsed.status}' (exit code ${code})`;
+        const runErr = new Error(detail);
+        runErr.status = parsed.status;
+        runErr.raw = parsed;
+        runErr.warnings = warnings;
+        return reject(runErr);
+      }
+
+      if (parsed.status === 'ERROR') {
+        warnings.push('agy 报内部错误但产物可能在 response，请人工核对');
+      }
+      const files = extractImplementFiles(response);
+      if (files === null) {
+        warnings.push('未找到 FILE 块，response 原样返回');
+      }
+      return resolve({
+        status: parsed.status,
+        response,
+        files,
+        warnings,
+        session_id: parsed.session_id || parsed.conversation_id,
+        usage: parsed.usage,
+        raw: parsed,
+      });
+    });
+  });
+}
+
 /**
  * Handle worker execution in background child process.
  *
@@ -235,6 +363,35 @@ export async function main(argv = process.argv.slice(2)) {
       console.log(`  Prompt: ${shortPrompt}`);
     }
     return;
+  }
+
+  if (args[0] === 'implement') {
+    const prompt = args.slice(1).join(' ').trim();
+    if (!prompt) {
+      console.error('Usage: agy-cli.mjs implement <instruction>');
+      process.exit(1);
+    }
+    try {
+      const result = await runAgyImplement(prompt);
+      if (result.files) {
+        console.log('Files:');
+        for (const file of result.files) {
+          const lines = file.content === '' ? [] : file.content.split(/\r?\n/);
+          if (lines.at(-1) === '') lines.pop();
+          const lineCount = lines.length;
+          console.log(`- ${file.path} (${lineCount} 行)`);
+        }
+      }
+      console.log(result.response);
+      for (const warning of result.warnings) console.error(warning);
+      return;
+    } catch (err) {
+      if (err.warnings) {
+        for (const warning of err.warnings) console.error(warning);
+      }
+      console.error(`Error: ${err.message}`);
+      process.exit(1);
+    }
   }
 
   // Handle research / default command

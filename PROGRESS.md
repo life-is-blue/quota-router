@@ -48,3 +48,37 @@ REVERSE_OK: status branch works when explicitly enabled
 2. `git diff 1a46427 -- GOAL.md plugins/agy plugins/cursor plugins/codebuddy package.json` 为空；marketplace 只追加 quota 一条
 3. 真机 `node plugins/router/scripts/setup.mjs`：四引擎全 installed；cursor/codex logged-in；agy/codebuddy unknown；exit 0
 4. `BLOCKED.md`：无
+
+---
+
+## Sprint D：`/agy:implement`（2026-08-24）
+
+### [x] 任务0：沙箱基线
+- 按任务书限制未运行 `npm test` 或 `node --test`。
+- 静态命令 `rg -o '\bit\(' tests --glob '*.mjs' | wc -l` → **40**。
+- 允许的自检仅使用 `node --check` 与直接调用 fake agy fixture。
+
+### [x] 任务1：核心脚本
+- `plugins/agy/scripts/agy-cli.mjs` 新增 `runAgyImplement` 与 `implement` CLI；保持 research/后台路径不变。
+- implement 固定注入只读 FILE 块模板，不传任何权限 flag；按 SUCCESS / ERROR+response / CANCELED / 其他状态四分支处理。
+- FILE 块尽力提取；无块保留原 response 并告警；CLI 先输出文件与行数清单，再输出完整 response，warnings 走 stderr。
+
+### [x] 任务2：命令文档
+- 新建 `plugins/agy/commands/implement.md`，声明 apply 模式、原样展示和用户确认、落盘前重读防覆盖、CANCELED 两条指引，以及 agy“已修改”声明不可信。
+
+### [x] 任务3：fixture 与测试
+- 扩展 `tests/fixtures/fake-agy-bin.mjs`，仅新增 implement SUCCESS/无块/ERROR+response/CANCELED/超时场景和可选 argv 记录，不改已有场景。
+- 新建 `tests/agy-implement.test.mjs` 共 **7** 条：两个 FILE 块、无块原样返回、ERROR 防御性成功、CANCELED 双指引、prompt/参数、ENOENT、原生 print timeout。
+- 静态 `it(` 总数：**47**（基线 40 + 新增 7）；未运行受沙箱限制的测试套件。
+
+### [x] 反向验证（静态推演）
+- 若把 `/===FILE:\s*(.+?)===\r?\n([\s\S]*?)===END===/g` 临时改成永远不匹配，场景 1 与 3 的 `files` 都会变成 `null`；两处 `result.files.length` 访问/长度断言必然失败，因此提取测试能拦截该退化。按任务书要求仅推演，未实际改坏代码或运行测试。
+
+### [x] Sprint D 自检证据
+- `node --check plugins/agy/scripts/agy-cli.mjs` → exit 0（无输出）。
+- `node --check tests/fixtures/fake-agy-bin.mjs` → exit 0（无输出）。
+- `node --check tests/agy-implement.test.mjs` → exit 0（无输出）。
+- 直接调用 fixture：IMPLEMENT_SUCCESS `exit=0/status=SUCCESS/response_len=161`；IMPLEMENT_NO_BLOCKS `0/SUCCESS/55`；IMPLEMENT_ERROR_WITH_RESPONSE `1/ERROR/69`；IMPLEMENT_CANCELED `1/CANCELED/0`；IMPLEMENT_TIMEOUT `1/ERROR/0`。
+- `rg -o '\bit\(' tests --glob '*.mjs' | wc -l` → **47**。
+- `git diff 95bed31 -- GOAL.md plugins/cursor plugins/codebuddy plugins/router .claude-plugin/marketplace.json package.json` → 空。
+- `git diff --check` → exit 0（无输出）；未安装依赖，未执行 git commit。
