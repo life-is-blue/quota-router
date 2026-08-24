@@ -396,3 +396,16 @@ Sprint 1–4 都是"让 CLI 拿任务书改 quota-router 自己"。只读适配�
 2. 登录检查只有 cursor 能做（`agent status` 文本里含 `Logged in` 判定）；agy/codebuddy 标 `unknown`（不猜、不烧 token 探测——宁可未知也不副作用）。
 3. **绝不**对 codebuddy 调用任何带参数的非白名单命令（会烧 token）。
 4. exit code 不可作为唯一判据（agy 报错也 exit 0、agent error 也 exit 0）——判据是「命令存在 + 输出内容匹配」。
+
+## 11. agy 写路径契约调研（2026-08-24）：headless 下写用户文件是断的，但 response 可当 patch 用
+
+为评估「agy 能否承担 implement 角色」做的隔离 fixture 实测（改一个 5 行 math.js，两种权限档各跑一次）：
+
+| 权限档 | exit | status | 用户文件 | 形态 |
+| --- | --- | --- | --- | --- |
+| 默认（无 flag） | 0 | **CANCELED** | **没写** | stderr 干净拒绝：工具需要 "command" 权限、headless 无法弹审批、auto-denied，提示加 permissions.allow 规则 |
+| `--dangerously-skip-permissions` | 0 | **ERROR** | **没写** | `error`: write_to_file 报 `/tmp/.../math.js is not a valid artifact path; artifacts must be in ~/.gemini/antigravity-cli/brain/<conv-id>/` —— 写工具被硬编码限定在它自己的 brain 目录 |
+
+**结论：agy headless 的写用户文件路径在设计上就是断的，两档都不通。**默认档的拒绝是干净信号（CANCELED + stderr 明示），skip 档则产生 GOAL.md 3.4 第 5 条坑的最完整形态：status ERROR 但 response 里带着完整正确的修改后代码。
+
+**可行路线（未实现，记在这里）**：「apply 模式」——让 agy 输出修改后的完整文件内容或 diff（它自然会放进 response），由调用方负责落盘。安全性反而更好（agy 全程只读，落盘权在 Claude 侧），且和 cursor implement 的「部分成功陷阱」正交。**若做 `/agy:implement`，契约应设计成 apply 模式，不要尝试让 agy 直接写文件。**
