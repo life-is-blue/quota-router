@@ -19,7 +19,10 @@
 
 ```bash
 claude plugin marketplace add life-is-blue/quota-router
-claude plugin install quota-router@agy quota-router@cursor quota-router@codebuddy quota-router@quota
+claude plugin install agy@quota-router
+claude plugin install cursor@quota-router
+claude plugin install codebuddy@quota-router
+claude plugin install quota@quota-router
 ```
 
 前提：本机已安装并登录对应 CLI（`agy`、`agent`（Cursor CLI）、`codebuddy`）。缺哪个对应命令就不可用，报错信息会直说。审查场景继续用官方 [codex-plugin-cc](https://github.com/openai/codex-plugin-cc)——我们是它的补充而非替代。
@@ -63,6 +66,8 @@ claude plugin install quota-router@agy quota-router@cursor quota-router@codebudd
 - **刻意不做共享抽象层**：理由见上，这是实测结论不是懒。
 
 ## 参与建设
+
+**先读 [docs/METHODOLOGY.md](docs/METHODOLOGY.md)** —— 本项目的核心可复用资产是一套工作方法：任务书驱动让 CLI 自建、管理者独立验收、第三方 CLI 对抗评审。它不依赖本仓库代码，任何"主控 AI + 本地 CLI"组合都能用。插件本身只是道具：简单稳定的管道。
 
 **开发**：`node --test tests/*.test.mjs`，40 个测试全绿是唯一可接受状态。仓库结构一个引擎一个目录（`plugins/<engine>/`），互不依赖。
 

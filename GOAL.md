@@ -193,6 +193,14 @@ agent -p "<prompt>" --output-format json
 2. **契约靠实测，不靠文档**：三家 CLI 的官方文档都有和实际不符的地方（codebuddy 文档里 JSON 响应格式那段甚至是空的 `{...}`，全靠实测拿到 envelope）。**新增任何 CLI，先契约调研、后写代码，这个顺序不许调换。**
 3. **反向验证不能省**：每个 Sprint 都故意制造一次失败证明防线会响（注释 kill 证明进程真挂起、换判法证明会误判）。**Sprint 4 那次还额外证明了任务书本身可以是错的**——当时任务书要求的反向验证 2 在逻辑上不成立（空 stdout 会被旧判法拦下，两种判法结论相同），执行者发现后订正并在 PROGRESS.md 记了原因。**书是人写的，实测才是裁判。**
 
+### 7.4 方法论是独立资产（2026-08-24 从立项讨论中提炼）
+
+本项目真正可复制的产出有两层：**插件（简单稳定的管道）**和**工作方法（任务书驱动的自建闭环）**。后者长期以"管理者暗知识"形态存在——八轮 Sprint 都在用，但直到立项讨论材料被重新审视才显式成文。
+
+核心分层：**复杂度放 markdown，不放代码**——任务书、路由表、验收协议都是文档，改起来零成本；插件只做 spawn/截断/判成败，越薄越稳。八轮迭代插件零重构、方法论每轮进化，就是这分层的红利。
+
+完整方法（任务书六要素、验收协议三件事、角色分工实测结论、复用者最小清单）独立成文于 **[docs/METHODOLOGY.md](docs/METHODOLOGY.md)**——它不依赖本仓库代码，任何"主控 AI + 本地 CLI"组合都可用。接手人先读它，再读契约章节。
+
 
 ## 8. Sprint 4 契约调研（已完成，2026-08-23）：codebuddy CLI headless 模式
 
@@ -376,23 +384,6 @@ Sprint 1–4 都是"让 CLI 拿任务书改 quota-router 自己"。只读适配�
 
 **给 `/quota:setup` 的含义**：
 1. 安装检查三家统一用 `--version`（纯净、快、输出非空即装了）。
-2. 登录检查只有 cursor 能做（`agent status` 文本里含 `Logged in` 判定）；agy/codebuddy 标 `unknown`（不猜、不烧 token 探测——宁可未知也不副作用）。
-3. **绝不**对 codebuddy 调用任何带参数的非白名单命令（会烧 token）。
-4. exit code 不可作为唯一判据（agy 报错也 exit 0、agent error 也 exit 0）——判据是「命令存在 + 输出内容匹配」。
-
-
-## 10. 批次 2 契约调研（2026-08-24）：三 CLI 的就绪探测命令
-
-`/quota:setup` 要输出「引擎 × 安装/登录/可用」就绪表，前置调研各 CLI 的无副作用探测方式。全部本机实测（agy 1.1.19 / agent 2026.08.11 / codebuddy 2.137.1）：
-
-| 引擎 | 版本探测 | 认证探测 | 备注 |
-| --- | --- | --- | --- |
-| agy | `agy --version` → `1.1.19`，exit 0，纯净 | **没有**（`agy status` 报 unexpected argument，且 exit code 仍是 0） | 登录态不可无副作用探测；未登录要到真调用才报 `authentication required` |
-| cursor | `agent --version` 纯净 | `agent status` → `✓ Logged in as <email>`，exit 0，**纯净且人读文本**；`--json` 不支持（unknown option，且 error 时 exit 也是 0） | 唯一有干净认证探测的引擎 |
-| codebuddy | `codebuddy --version` → `2.137.1`，纯净 | **没有**——**`status`/`whoami`/裸命令全部把参数当 prompt 跑真会话烧 token**（实测两次，返回的是对当前目录的 LLM 分析） | ⚠️ 任何「探测」都必须精确匹配已知子命令，绝不能把未知参数递给它 |
-
-**给 `/quota:setup` 的含义**：
-1. 安装检查三家统一用 `--version`（纯净、快、exit code 可靠度待定但输出非空即装了）。
 2. 登录检查只有 cursor 能做（`agent status` 文本里含 `Logged in` 判定）；agy/codebuddy 标 `unknown`（不猜、不烧 token 探测——宁可未知也不副作用）。
 3. **绝不**对 codebuddy 调用任何带参数的非白名单命令（会烧 token）。
 4. exit code 不可作为唯一判据（agy 报错也 exit 0、agent error 也 exit 0）——判据是「命令存在 + 输出内容匹配」。
