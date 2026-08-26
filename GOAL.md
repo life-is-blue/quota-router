@@ -414,3 +414,11 @@ Sprint 1–4 都是"让 CLI 拿任务书改 quota-router 自己"。只读适配�
 **定论**：apply 模式可行的充要条件是 **工作目录在 agy 的 trustedWorkspaces 里**（用户真实场景本来如此）。此时 read_file 默认「Auto-allowed in workspace」，无需任何 flag。`ERROR + response` 降级为**防御性兼容分支**（万一上游行为漂移时不丢产物），不是主成功路径。
 
 **遗留限制（写进 /agy:implement 命令文档）**：①工作目录必须在 trustedWorkspaces（setup.md 的安装指引里提示 `agy` 交互模式首次使用会询问信任）；②response 里的代码围栏格式不保证稳定，插件不解析，Claude 侧落盘前必须向用户展示内容；③**CANCELED + auto-denied 要给用户可操作的指引**（把目录加入 trustedWorkspaces 或加 permissions.allow 规则），不是一句干巴巴的报错。
+
+## 12. Backlog（使用期，按触发条件排列——疼了再做，不疼不做）
+
+- **路由自动化**（触发：使用账 ≥20 条且出现重复路由模式）：目前手动选命令。数据够了再谈自动，写死几条启发式也比现在猜强。
+- **批次 3 · schema 化调研输出**（触发：主会话消费 result 时频繁需要二次解析）：现在 result 是自然语言，Opus 每次都要"读人话"。等消费痛点成形再定字段。
+- **README 安装命令修复**（触发：下次发版前）：`claude plugin install` 不支持一条命令装多插件，README 里的四连命令实测跑不通，需拆成逐条。**使用期发现的第一个真实 gap，已实测确认。**
+- **job 文件清理**（触发：`/agy:status` 列表变慢或磁盘报警）：已知会堆积，量级无害。
+- **codebuddy `--bg` 重测**（触发：codebuddy 升级后）：探针在 8.7 节。
