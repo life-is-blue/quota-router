@@ -422,3 +422,19 @@ Sprint 1–4 都是"让 CLI 拿任务书改 quota-router 自己"。只读适配�
 - **README 安装命令修复**（触发：下次发版前）：`claude plugin install` 不支持一条命令装多插件，README 里的四连命令实测跑不通，需拆成逐条。**使用期发现的第一个真实 gap，已实测确认。**
 - **job 文件清理**（触发：`/agy:status` 列表变慢或磁盘报警）：已知会堆积，量级无害。
 - **codebuddy `--bg` 重测**（触发：codebuddy 升级后）：探针在 8.7 节。
+
+## 13. G2 前置调研（2026-08-24）：三 CLI resume 契约实测
+
+三家的 resume 成功路径全部可用（各自记得上一轮内容、session/conversation id 稳定不变）。**失败形态三家三样，全部实测**：
+
+| 引擎 | resume 坏 id 的形态 | 危险等级 |
+| --- | --- | --- |
+| agy | exit 0 + `status:SUCCESS` + **response 空** + **分配新 conversation_id** + stderr 一行 warning（"conversation not found"） | 假成功，可检测（空 response + stderr 关键词） |
+| cursor | exit 0 + 正常 JSON + `subtype:success` + **把 prompt 当全新会话处理**（静默降级，不报任何错；实测它甚至开始读工作区文件回答"继续"） | **最险**：无任何错误信号，产出看似正常实则丢了全部上下文 |
+| codebuddy | exit 0 + **stdout 0 字节** + stderr 纯文本 "No conversation found with session ID: xxx" | 最干净，现有判法直接可判失败 |
+
+**给 G2 实现的硬要求**：
+1. cursor 的静默降级**无法从单次调用检测**——适配器必须在 resume 成功返回后**校验返回的 session_id 是否等于请求的 id**（不等 = 静默降级，判失败并警告「上下文未延续，这是一次全新会话」）。agy 同理校验 conversation_id。
+2. codebuddy 走现有空 stdout 判法即可，但要把它 resume 失败的 stderr 文案（"No conversation found"）加进可识别错误。
+3. resume 成功时 session_id 不轮换（三家实测一致），连续 resume 链可行。
+4. 跨引擎 id：交给各引擎自己的报错透传，不做映射。
