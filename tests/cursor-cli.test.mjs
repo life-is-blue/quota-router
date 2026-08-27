@@ -340,6 +340,26 @@ describe('cursor-cli G1 save + G2 resume', () => {
     }
   });
 
+  it('G2.4 QUOTA_RESUME_ID env channel (slash-command structured entry)', async () => {
+    const argvFile = path.join(os.tmpdir(), `qr-cursor-envch-${Date.now()}.json`);
+    try {
+      const result = await runCli(['research', 'follow up question'], {
+        CURSOR_AGENT_BIN: FAKE_CURSOR_BIN,
+        FAKE_CURSOR_SCENARIO: 'RESUME_ECHO_ID',
+        FAKE_CURSOR_ARGV_FILE: argvFile,
+        QUOTA_RESUME_ID: 'env-channel-id-42',
+      });
+      assert.equal(result.code, 0);
+      const argv = JSON.parse(fs.readFileSync(argvFile, 'utf8'));
+      assert.equal(argv[argv.indexOf('--resume') + 1], 'env-channel-id-42');
+      assert.equal(argv[argv.indexOf('-p') + 1], 'follow up question');
+      // Security flags must still ride along on the resumed call.
+      assert.ok(argv.includes('--mode') && argv[argv.indexOf('--mode') + 1] === 'ask');
+    } finally {
+      fs.rmSync(argvFile, { force: true });
+    }
+  });
+
   it('G1.5 unicode prompt is stored in frontmatter', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'qr-cursor-uni-'));
     try {

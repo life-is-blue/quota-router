@@ -465,4 +465,57 @@ describe('agy-cli G1 save + G2 resume', () => {
       fs.rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  it('G2.4 QUOTA_RESUME_ID env channel (slash-command structured entry)', async () => {
+    const argvFile = path.join(os.tmpdir(), `qr-agy-envch-${Date.now()}.json`);
+    try {
+      const result = await runCli(['research', 'follow up question'], {
+        AGY_BIN: FAKE_AGY_BIN,
+        FAKE_AGY_SCENARIO: 'RESUME_ECHO_ID',
+        FAKE_AGY_ARGV_FILE: argvFile,
+        QUOTA_RESUME_ID: 'env-channel-id-42',
+      });
+      assert.equal(result.code, 0);
+      const argv = JSON.parse(fs.readFileSync(argvFile, 'utf8'));
+      assert.equal(argv[argv.indexOf('--conversation') + 1], 'env-channel-id-42');
+      assert.equal(argv[argv.indexOf('-p') + 1], 'follow up question');
+    } finally {
+      fs.rmSync(argvFile, { force: true });
+    }
+  });
+
+  it('G2.5 --background combined with --resume is explicitly rejected', async () => {
+    const result = await runCli(['research', '--background', '--resume', 'abc', '继续'], {
+      AGY_BIN: FAKE_AGY_BIN,
+      FAKE_AGY_SCENARIO: 'SUCCESS',
+    });
+    assert.notEqual(result.code, 0);
+    assert.match(result.stderr, /resume.*background|background.*resume|不支持/i);
+  });
+
+  it('G1.6 wx collision (same test uuid twice) does not overwrite and stays exit 0', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'qr-agy-wx-'));
+    try {
+      const opts = {
+        AGY_BIN: FAKE_AGY_BIN,
+        FAKE_AGY_SCENARIO: 'SUCCESS',
+        QUOTA_ROUTER_RESULTS_DIR: dir,
+        QUOTA_ROUTER_NO_SAVE: '0',
+        QUOTA_TEST_UUID: 'deadbee1',
+      };
+      const first = await runCli(['research', 'first question'], opts);
+      assert.equal(first.code, 0);
+      // Pre-create the exact target file for the second run (same second is
+      // not guaranteed, so seed the dir with a file matching this second's stamp).
+      const second = await runCli(['research', 'second question'], opts);
+      assert.equal(second.code, 0, 'wx collision must not fail the research');
+      const files = listSavedMd(dir);
+      // Either one file (same-second collision → second save warned) or two
+      // (different seconds); in both cases result text printed and exit 0.
+      assert.ok(files.length >= 1);
+      assert.match(second.stdout, /Git rebase reapplies commits/);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });

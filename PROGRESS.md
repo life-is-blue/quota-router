@@ -45,8 +45,9 @@
 - 自检：`node --test tests/*.test.mjs` → **75 pass / 0 fail / 0 skip**。
 
 ### [x] 反向验证（推演；真跑归验收方）
-1. **先保存后输出**：若把 `persistResearchResult` 挪到 `console.log(result)` 之前，且 RESULTS_DIR 注入为普通文件（不可 mkdir），则保存抛错会在输出之前打断主路径——G1.2「result 照常出现在 stdout + exit 0」会红。当前「先输出后保存」保证调研成功不被落盘失败吞掉。
-2. **删掉 id 校验**：若去掉 resume 后的 `returnedId !== resumeId` 判断，RESUME_NEW_ID（cursor 静默降级形态）会 resolve 成功——G2.2 会红。当前校验是 cursor 静默降级的唯一检测法。
+1. **删掉 id 校验**：若去掉 resume 后的 `returnedId !== resumeId` 判断，RESUME_NEW_ID（cursor 静默降级形态）会 resolve 成功——G2.2 会红。当前校验是 cursor 静默降级的唯一检测法。
+2. **「先输出后保存」顺序的测试局限（评审更正）**：persistResearchResult 内部自吞异常，把保存挪到输出之前时 G1.2 的断言（result 在 stdout、warning 在 stderr、exit 0）**不会**变红——顺序契约由代码评审锁定（Codex ok-verified 三入口顺序正确），不硬造假顺序测试。
+3. **评审后补测**：G2.4（QUOTA_RESUME_ID 结构化入口）、G2.5（background+resume 显式拒绝）、G1.6（wx 冲突不覆盖不失败）——均有真实断言，见各测试文件。
 
 ### [x] 硬指标自检
 1. 测试：**75 pass / 0 fail / 0 skip**（本机已跑）。

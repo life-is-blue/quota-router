@@ -32,7 +32,9 @@ function saveResult(payload, resultsDir) {
     // best-effort directory mode
   }
   const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z');
-  const filePath = path.join(resultsDir, `${stamp}-${crypto.randomUUID().slice(0, 8)}.md`);
+  // QUOTA_TEST_UUID: deterministic suffix for wx-collision tests (test-only).
+  const suffix = process.env.QUOTA_TEST_UUID || crypto.randomUUID().slice(0, 8);
+  const filePath = path.join(resultsDir, `${stamp}-${suffix}.md`);
   const text =
     `---\n` +
     `engine: ${payload.engine}\n` +
@@ -69,6 +71,11 @@ function persistResearchResult(payload, resultsDir) {
 
 function parseResearchCliArgs(argv) {
   let resumeId = null;
+  // Structured resume channel for slash-command entry ($ARGUMENTS arrives
+  // as ONE argv element; QUOTA_RESUME_ID avoids shell-parsing pitfalls).
+  if (process.env.QUOTA_RESUME_ID) {
+    resumeId = process.env.QUOTA_RESUME_ID;
+  }
   const promptParts = [];
   let restIsPrompt = false;
   for (let i = 0; i < argv.length; i++) {

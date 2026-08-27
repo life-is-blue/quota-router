@@ -388,4 +388,25 @@ describe('codebuddy-cli G1 save + G2 resume', () => {
     assert.match(result.combined, /No conversation found/);
     assert.match(result.combined, /不是合法 JSON|失败/i);
   });
+
+  it('G2.4 QUOTA_RESUME_ID env channel (slash-command structured entry)', async () => {
+    const argvFile = path.join(os.tmpdir(), `qr-cb-envch-${Date.now()}.json`);
+    try {
+      const result = await runCli(['research', 'follow up question'], {
+        CODEBUDDY_BIN: FAKE_CODEBUDDY_BIN,
+        FAKE_CODEBUDDY_SCENARIO: 'RESUME_ECHO_ID',
+        FAKE_CODEBUDDY_ARGV_FILE: argvFile,
+        QUOTA_RESUME_ID: 'env-channel-id-42',
+      });
+      assert.equal(result.code, 0);
+      const argv = JSON.parse(fs.readFileSync(argvFile, 'utf8'));
+      assert.equal(argv[argv.indexOf('--resume') + 1], 'env-channel-id-42');
+      assert.equal(argv[argv.indexOf('-p') + 1], 'follow up question');
+      // Security flags must still ride along on the resumed call.
+      assert.ok(argv.includes('--permission-mode') && argv[argv.indexOf('--permission-mode') + 1] === 'dontAsk');
+      assert.ok(argv.includes('--tools'));
+    } finally {
+      fs.rmSync(argvFile, { force: true });
+    }
+  });
 });

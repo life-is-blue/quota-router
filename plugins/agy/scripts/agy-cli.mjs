@@ -43,7 +43,9 @@ function saveResult(payload, resultsDir) {
     // best-effort directory mode
   }
   const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z');
-  const filePath = path.join(resultsDir, `${stamp}-${crypto.randomUUID().slice(0, 8)}.md`);
+  // QUOTA_TEST_UUID: deterministic suffix for wx-collision tests (test-only).
+  const suffix = process.env.QUOTA_TEST_UUID || crypto.randomUUID().slice(0, 8);
+  const filePath = path.join(resultsDir, `${stamp}-${suffix}.md`);
   const text =
     `---\n` +
     `engine: ${payload.engine}\n` +
@@ -83,6 +85,13 @@ function parseResearchCliArgs(argv) {
   let resumeId = null;
   const promptParts = [];
   let restIsPrompt = false;
+  // Structured resume channel for slash-command entry: the command template
+  // receives "$ARGUMENTS" as ONE argv element, so an inline `--resume <id>`
+  // would be swallowed into the prompt. The template passes the id via this
+  // env var instead (QUOTA_RESUME_ID), which has no shell-parsing pitfalls.
+  if (process.env.QUOTA_RESUME_ID) {
+    resumeId = process.env.QUOTA_RESUME_ID;
+  }
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (restIsPrompt) {
@@ -112,6 +121,11 @@ function parseResearchCliArgs(argv) {
     }
     restIsPrompt = true;
     promptParts.push(arg);
+  }
+  if (isBackground && resumeId) {
+    // Background worker does not persist the resume id — silently dropping
+    // it would open a NEW conversation, which the user did not ask for.
+    return { error: 'resume-with-background-unsupported' };
   }
   return {
     isBackground,
@@ -532,6 +546,10 @@ export async function main(argv = process.argv.slice(2)) {
   const parsedArgs = parseResearchCliArgs(args);
   if (parsedArgs.error === 'missing-resume-id') {
     console.error('Usage: agy-cli.mjs research [--resume <id>] [--background] <prompt> | agy-cli.mjs implement <instruction> | agy-cli.mjs status [job-id]');
+    process.exit(1);
+  }
+  if (parsedArgs.error === 'resume-with-background-unsupported') {
+    console.error('Error: --resume 与 --background 暂不支持组合（后台 worker 不保存会话 id）。请去掉 --background 前台续接。');
     process.exit(1);
   }
   const { isBackground, resumeId } = parsedArgs;
