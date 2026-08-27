@@ -69,7 +69,7 @@ claude plugin install quota@quota-router
 
 **先读 [docs/METHODOLOGY.md](docs/METHODOLOGY.md)** —— 本项目的核心可复用资产是一套工作方法：任务书驱动让 CLI 自建、管理者独立验收、第三方 CLI 对抗评审。它不依赖本仓库代码，任何"主控 AI + 本地 CLI"组合都能用。插件本身只是道具：简单稳定的管道。
 
-**开发**：`node --test tests/*.test.mjs`，40 个测试全绿是唯一可接受状态。仓库结构一个引擎一个目录（`plugins/<engine>/`），互不依赖。
+**开发**：`node --test tests/*.test.mjs`，80 个测试全绿是唯一可接受状态。仓库结构一个引擎一个目录（`plugins/<engine>/`），互不依赖。
 
 **接新引擎**（我们最欢迎的贡献，流程不许跳步）：
 

@@ -6,7 +6,7 @@
 
 `quota-router` 是一个独立的 Claude Code 插件仓库，让 Opus 5 作为主控，把调研 / 小改动 / 批量重构 / 对抗审查这些任务分流给本地已安装的 CLI（agy / Cursor CLI / codebuddy / 官方 Codex 插件），省 Opus 的调用额度。
 
-**现在到哪了（2026-08-24，主体完工）**：三个 CLI 只读调研全通（`/agy:research` 含 `--background` + `/agy:status`、`/cursor:research`、`/codebuddy:research`），写能力有 `/cursor:implement`（单文件，`--trust` 最小权限 + 部分成功 warning），stderr 截断全覆盖，路由指引在 [README.md](README.md)。**34 pass 0 fail 0 skip**。唯一挂起项：codebuddy 后台（`--bg` 上游损坏，见 8.7）。怎么用看 README，接下来干什么看第 7 节。
+**现在到哪了（2026-08-27，v1.2.0 已发）**：六命令可用——`/agy:research`（含 `--background`/`--resume` + `/agy:status`）、`/cursor:research`（含 `--resume`）、`/codebuddy:research`（含 `--resume`）、`/cursor:implement`（直接写）、`/agy:implement`（apply 模式）、`/quota:setup`。调研结果自动落盘（G1，~/.claude/quota-router/results/）。**80 pass 0 fail 0 skip**。挂起项见第 12 节 backlog（均带触发条件）。怎么用看 README。
 
 **和 `codex-plugin-cc` 的关系**：只读参照物，不 fork、不改它的代码。原因见下方"已验证的事实"。这个仓库独立存在，自己有一份 `marketplace.json`。
 

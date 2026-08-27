@@ -1,5 +1,24 @@
 # Changelog
 
+## 1.2.0 — 2026-08-27
+
+首个由**真实使用反馈**驱动的版本：v1.1.0 后首轮 dogfood（调研 agy-cli-docs-mirror 架构）撞到的两个疼点——调研结果只活在会话里、连续追问重复喂上下文（实测多花 3 万 input token）。80 个测试全绿。
+
+### 新能力
+
+- **结果落盘**（G1）：三个 research 命令成功后自动把结果存到 `~/.claude/quota-router/results/`（目录 0700/文件 0600、四反引号围栏防代码块碰撞、独占创建不覆盖）。**保存是 best-effort：落盘失败绝不推翻已成功的调研**（result 先输出、失败仅 stderr warning、exit 0）。`QUOTA_ROUTER_RESULTS_DIR` 覆盖路径、`QUOTA_ROUTER_NO_SAVE=1` 禁用。
+- **会话延续**（G2）：`--resume <id>` 续接上一轮调研，三引擎统一语法。**核心防线：resume 后校验返回 id == 请求 id**——cursor 的 resume 失败是静默降级成全新会话（无任何错误信号，GOAL.md 13 节实测），id 校验是唯一检测法。只读安全参数每次 resume 原样重带、绝不继承自旧会话。
+- **结构化续接入口**：斜杠命令的 `$ARGUMENTS` 是整串传参，内联 `--resume` 会被吞进 prompt（Codex 评审抓到的 blocker）——命令模板提供 `QUOTA_RESUME_ID` 环境变量通道。
+
+### 修复与加固
+
+- Sprint E 经 Codex 对抗评审修复：命令入口 resume 失效 blocker、agy `--background + --resume` 静默丢 id 改显式拒绝、wx 冲突测试、PROGRESS 反向验证声明更正
+
+### 契约实测记录
+
+- **三 CLI resume 失败形态三家三样**（GOAL.md 13 节）：agy 假成功（exit 0 + 空 response + 新 id）、cursor **静默降级**（正常 JSON 报 success，实为全新会话——最险）、codebuddy 干净失败（空 stdout + stderr 明示）
+- **agy 无法担任执行者**（角色路由数据点）：headless 默认权限连建文件都被 auto-denied，`--dangerously-skip-permissions` 也绕不过写工具锁死在 brain 目录（11 节）——能力面 = 只读调研 + apply 起草
+
 ## 1.1.0 — 2026-08-24
 
 新增更安全的执行路径与就绪诊断。51 个测试全绿。
