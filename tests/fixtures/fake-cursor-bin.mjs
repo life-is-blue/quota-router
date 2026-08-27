@@ -5,8 +5,22 @@
  * Controlled by FAKE_CURSOR_SCENARIO env var.
  */
 import process from 'node:process';
+import fs from 'node:fs';
 
 const scenario = process.env.FAKE_CURSOR_SCENARIO || 'SUCCESS';
+
+if (process.env.FAKE_CURSOR_ARGV_FILE) {
+  fs.writeFileSync(process.env.FAKE_CURSOR_ARGV_FILE, JSON.stringify(process.argv.slice(2)));
+}
+
+function idFromArgv() {
+  const a = process.argv.slice(2);
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] === '--resume') return a[i + 1];
+    if (a[i].startsWith('--resume=')) return a[i].slice('--resume='.length);
+  }
+  return 'echo-without-resume-flag';
+}
 
 switch (scenario) {
   case 'SUCCESS': {
@@ -78,6 +92,52 @@ switch (scenario) {
     // exit 1 + empty stdout + ≥5000-char stderr (research hard-fail path).
     process.stderr.write('Y'.repeat(5000) + '\n');
     process.exit(1);
+    break;
+  }
+
+  case 'CODE_FENCE': {
+    const output = {
+      type: 'result',
+      subtype: 'success',
+      is_error: false,
+      duration_ms: 500,
+      result: 'Example with fence:\n```js\nconst x = 1;\n```\nend.',
+      session_id: 'fake-session-fence-010',
+      usage: { inputTokens: 10, outputTokens: 20 },
+    };
+    process.stdout.write(JSON.stringify(output) + '\n');
+    process.exit(0);
+    break;
+  }
+
+  case 'RESUME_ECHO_ID': {
+    const resumeId = idFromArgv();
+    const output = {
+      type: 'result',
+      subtype: 'success',
+      is_error: false,
+      duration_ms: 400,
+      result: `Resumed session ${resumeId} successfully.`,
+      session_id: resumeId,
+      usage: { inputTokens: 10, outputTokens: 10 },
+    };
+    process.stdout.write(JSON.stringify(output) + '\n');
+    process.exit(0);
+    break;
+  }
+
+  case 'RESUME_NEW_ID': {
+    const output = {
+      type: 'result',
+      subtype: 'success',
+      is_error: false,
+      duration_ms: 400,
+      result: 'This looks like a fresh answer with no prior context.',
+      session_id: 'silent-new-session-999',
+      usage: { inputTokens: 10, outputTokens: 10 },
+    };
+    process.stdout.write(JSON.stringify(output) + '\n');
+    process.exit(0);
     break;
   }
 

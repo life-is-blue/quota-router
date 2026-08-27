@@ -2,6 +2,9 @@
 
 import { spawn } from 'node:child_process';
 import crypto from 'node:crypto';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 import {
@@ -32,6 +35,91 @@ export {
   formatJobStatus,
 };
 
+function saveResult(payload, resultsDir) {
+  fs.mkdirSync(resultsDir, { recursive: true, mode: 0o700 });
+  try {
+    fs.chmodSync(resultsDir, 0o700);
+  } catch {
+    // best-effort directory mode
+  }
+  const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z');
+  const filePath = path.join(resultsDir, `${stamp}-${crypto.randomUUID().slice(0, 8)}.md`);
+  const text =
+    `---\n` +
+    `engine: ${payload.engine}\n` +
+    `timestamp: ${payload.timestamp || new Date().toISOString()}\n` +
+    `session_id: ${payload.session_id || ''}\n` +
+    `prompt: ${JSON.stringify(payload.prompt || '')}\n` +
+    `---\n\n` +
+    '````\n' +
+    `${payload.body ?? ''}\n` +
+    '````\n';
+  const fd = fs.openSync(filePath, 'wx', 0o600);
+  try {
+    fs.writeFileSync(fd, text);
+    try {
+      fs.fchmodSync(fd, 0o600);
+    } catch {
+      // best-effort file mode
+    }
+  } finally {
+    fs.closeSync(fd);
+  }
+  return filePath;
+}
+
+function persistResearchResult(payload, resultsDir) {
+  if (!resultsDir) return;
+  try {
+    const saved = saveResult(payload, resultsDir);
+    console.log(`Saved: ${saved}`);
+  } catch (err) {
+    console.error(`Warning: failed to save research result: ${err.message}`);
+  }
+}
+
+function parseResearchCliArgs(argv) {
+  let isBackground = false;
+  let resumeId = null;
+  const promptParts = [];
+  let restIsPrompt = false;
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
+    if (restIsPrompt) {
+      promptParts.push(arg);
+      continue;
+    }
+    if (arg === '--') {
+      restIsPrompt = true;
+      continue;
+    }
+    if (arg === '--background' || arg === '-b') {
+      isBackground = true;
+      continue;
+    }
+    if (arg === '--resume') {
+      const next = argv[i + 1];
+      if (next === undefined || next === '--') {
+        return { error: 'missing-resume-id' };
+      }
+      resumeId = next;
+      i += 1;
+      continue;
+    }
+    if (arg.startsWith('--resume=')) {
+      resumeId = arg.slice('--resume='.length);
+      continue;
+    }
+    restIsPrompt = true;
+    promptParts.push(arg);
+  }
+  return {
+    isBackground,
+    resumeId: resumeId || null,
+    prompt: promptParts.join(' ').trim(),
+  };
+}
+
 /**
  * Execute research prompt via agy headless CLI.
  *
@@ -39,6 +127,7 @@ export {
  * @param {object} [options]
  * @param {string} [options.agyBin]
  * @param {string} [options.timeout]
+ * @param {string} [options.resumeId]
  * @returns {Promise<{ status: string, response?: string, error?: string, warnings?: string[], raw: any }>}
  */
 export function runAgyResearch(prompt, options = {}) {
@@ -53,6 +142,9 @@ export function runAgyResearch(prompt, options = {}) {
     '--print-timeout',
     timeout,
   ];
+  if (options.resumeId) {
+    args.push('--conversation', options.resumeId);
+  }
 
   return new Promise((resolve, reject) => {
     let child;
@@ -132,6 +224,17 @@ export function runAgyResearch(prompt, options = {}) {
         runErr.raw = parsed;
         runErr.warnings = warnings;
         return reject(runErr);
+      }
+
+      if (options.resumeId) {
+        const returnedId = parsed.conversation_id;
+        if (returnedId !== options.resumeId) {
+          return reject(
+            new Error(
+              `上下文未延续（resume 失败）：引擎返回了新会话 ${returnedId}，这可能是一次全新回答`
+            )
+          );
+        }
       }
 
       return resolve({
@@ -426,22 +529,23 @@ export async function main(argv = process.argv.slice(2)) {
     args.shift();
   }
 
-  // Check background flag
-  let isBackground = false;
-  const filteredArgs = [];
-  for (const arg of args) {
-    if (arg === '--background' || arg === '-b') {
-      isBackground = true;
-    } else {
-      filteredArgs.push(arg);
-    }
-  }
-
-  const prompt = filteredArgs.join(' ').trim();
-  if (!prompt) {
-    console.error('Usage: agy-cli.mjs research [--background] <prompt> | agy-cli.mjs implement <instruction> | agy-cli.mjs status [job-id]');
+  const parsedArgs = parseResearchCliArgs(args);
+  if (parsedArgs.error === 'missing-resume-id') {
+    console.error('Usage: agy-cli.mjs research [--resume <id>] [--background] <prompt> | agy-cli.mjs implement <instruction> | agy-cli.mjs status [job-id]');
     process.exit(1);
   }
+  const { isBackground, resumeId } = parsedArgs;
+  const prompt = parsedArgs.prompt;
+  if (!prompt) {
+    console.error('Usage: agy-cli.mjs research [--resume <id>] [--background] <prompt> | agy-cli.mjs implement <instruction> | agy-cli.mjs status [job-id]');
+    process.exit(1);
+  }
+
+  const resultsDir =
+    process.env.QUOTA_ROUTER_NO_SAVE === '1'
+      ? null
+      : process.env.QUOTA_ROUTER_RESULTS_DIR ||
+        path.join(os.homedir(), '.claude', 'quota-router', 'results');
 
   if (isBackground) {
     const jobId = crypto.randomUUID();
@@ -478,7 +582,7 @@ export async function main(argv = process.argv.slice(2)) {
 
   // Foreground mode
   try {
-    const result = await runAgyResearch(prompt);
+    const result = await runAgyResearch(prompt, { resumeId: resumeId || undefined });
     if (result.warnings && result.warnings.length > 0) {
       for (const warning of result.warnings) {
         console.error(warning);
@@ -487,6 +591,15 @@ export async function main(argv = process.argv.slice(2)) {
     if (result.response) {
       console.log(result.response);
     }
+    persistResearchResult(
+      {
+        engine: 'agy',
+        session_id: result.conversation_id,
+        prompt,
+        body: result.response || '',
+      },
+      resultsDir
+    );
   } catch (err) {
     if (err.warnings && err.warnings.length > 0) {
       for (const warning of err.warnings) {

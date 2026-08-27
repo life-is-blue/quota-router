@@ -1,6 +1,10 @@
 #!/usr/bin/env node
 
 import { spawn } from 'node:child_process';
+import crypto from 'node:crypto';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
@@ -12,6 +16,85 @@ const MAX_STDERR_TRUNCATE = 2000;
 // Chinese ("被拒绝"/"禁止"/"无法完成"); English blocked|rejected|denied never
 // appeared. Cover both so the adapter is not defenseless either way.
 const SOFT_DENY_PATTERN = /被拒绝|禁止|无法完成|blocked|rejected|denied/i;
+
+function saveResult(payload, resultsDir) {
+  fs.mkdirSync(resultsDir, { recursive: true, mode: 0o700 });
+  try {
+    fs.chmodSync(resultsDir, 0o700);
+  } catch {
+    // best-effort directory mode
+  }
+  const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z');
+  const filePath = path.join(resultsDir, `${stamp}-${crypto.randomUUID().slice(0, 8)}.md`);
+  const text =
+    `---\n` +
+    `engine: ${payload.engine}\n` +
+    `timestamp: ${payload.timestamp || new Date().toISOString()}\n` +
+    `session_id: ${payload.session_id || ''}\n` +
+    `prompt: ${JSON.stringify(payload.prompt || '')}\n` +
+    `---\n\n` +
+    '````\n' +
+    `${payload.body ?? ''}\n` +
+    '````\n';
+  const fd = fs.openSync(filePath, 'wx', 0o600);
+  try {
+    fs.writeFileSync(fd, text);
+    try {
+      fs.fchmodSync(fd, 0o600);
+    } catch {
+      // best-effort file mode
+    }
+  } finally {
+    fs.closeSync(fd);
+  }
+  return filePath;
+}
+
+function persistResearchResult(payload, resultsDir) {
+  if (!resultsDir) return;
+  try {
+    const saved = saveResult(payload, resultsDir);
+    console.log(`Saved: ${saved}`);
+  } catch (err) {
+    console.error(`Warning: failed to save research result: ${err.message}`);
+  }
+}
+
+function parseResearchCliArgs(argv) {
+  let resumeId = null;
+  const promptParts = [];
+  let restIsPrompt = false;
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
+    if (restIsPrompt) {
+      promptParts.push(arg);
+      continue;
+    }
+    if (arg === '--') {
+      restIsPrompt = true;
+      continue;
+    }
+    if (arg === '--resume') {
+      const next = argv[i + 1];
+      if (next === undefined || next === '--') {
+        return { error: 'missing-resume-id' };
+      }
+      resumeId = next;
+      i += 1;
+      continue;
+    }
+    if (arg.startsWith('--resume=')) {
+      resumeId = arg.slice('--resume='.length);
+      continue;
+    }
+    restIsPrompt = true;
+    promptParts.push(arg);
+  }
+  return {
+    resumeId: resumeId || null,
+    prompt: promptParts.join(' ').trim(),
+  };
+}
 
 /**
  * Execute research prompt via codebuddy CLI headless mode.
@@ -47,6 +130,9 @@ export function runCodebuddyResearch(prompt, options = {}) {
     '--output-format',
     'json',
   ];
+  if (options.resumeId) {
+    args.push('--resume', options.resumeId);
+  }
 
   return new Promise((resolve, reject) => {
     let child;
@@ -118,7 +204,13 @@ export function runCodebuddyResearch(prompt, options = {}) {
         );
       }
 
-      // Contract 2 gate: parse -> must be an array -> must contain type:"result".
+      if (/No conversation found/i.test(trimmedStderr)) {
+        return reject(
+          new Error(
+            `codebuddy 输出不是合法 JSON（可能失败）。No conversation found\nstderr: ${trimmedStderr || '(empty)'}`
+          )
+        );
+      }
       // Any of the three failing means failure, even on exit 0.
       let parsed;
       try {
@@ -162,6 +254,17 @@ export function runCodebuddyResearch(prompt, options = {}) {
         );
       }
 
+      if (options.resumeId) {
+        const returnedId = resultItem.session_id;
+        if (returnedId !== options.resumeId) {
+          return reject(
+            new Error(
+              `上下文未延续（resume 失败）：引擎返回了新会话 ${returnedId}，这可能是一次全新回答`
+            )
+          );
+        }
+      }
+
       return resolve({
         status: 'SUCCESS',
         result: resultText,
@@ -184,14 +287,26 @@ export async function main(argv = process.argv.slice(2)) {
     args.shift();
   }
 
-  const prompt = args.join(' ').trim();
+  const parsedArgs = parseResearchCliArgs(args);
+  if (parsedArgs.error === 'missing-resume-id') {
+    console.error('Usage: codebuddy-cli.mjs research [--resume <id>] <prompt>');
+    process.exit(1);
+  }
+  const { resumeId } = parsedArgs;
+  const prompt = parsedArgs.prompt;
   if (!prompt) {
-    console.error('Usage: codebuddy-cli.mjs research <prompt>');
+    console.error('Usage: codebuddy-cli.mjs research [--resume <id>] <prompt>');
     process.exit(1);
   }
 
+  const resultsDir =
+    process.env.QUOTA_ROUTER_NO_SAVE === '1'
+      ? null
+      : process.env.QUOTA_ROUTER_RESULTS_DIR ||
+        path.join(os.homedir(), '.claude', 'quota-router', 'results');
+
   try {
-    const result = await runCodebuddyResearch(prompt);
+    const result = await runCodebuddyResearch(prompt, { resumeId: resumeId || undefined });
     if (result.warnings && result.warnings.length > 0) {
       for (const warning of result.warnings) {
         console.error(warning);
@@ -200,6 +315,15 @@ export async function main(argv = process.argv.slice(2)) {
     if (result.result) {
       console.log(result.result);
     }
+    persistResearchResult(
+      {
+        engine: 'codebuddy',
+        session_id: result.session_id,
+        prompt,
+        body: result.result || '',
+      },
+      resultsDir
+    );
   } catch (err) {
     console.error(`Error: ${err.message}`);
     process.exit(1);

@@ -1,6 +1,10 @@
 #!/usr/bin/env node
 
 import { spawn } from 'node:child_process';
+import crypto from 'node:crypto';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
@@ -19,6 +23,85 @@ function truncateForEmbed(text) {
 /** Partial-success trap (GOAL.md §9.5): agent may write guessed results after shell was blocked. */
 const IMPLEMENT_PARTIAL_PATTERN =
   /被拒绝|无法执行|未能实际执行|跳过|blocked|rejected|denied|skipped/i;
+
+function saveResult(payload, resultsDir) {
+  fs.mkdirSync(resultsDir, { recursive: true, mode: 0o700 });
+  try {
+    fs.chmodSync(resultsDir, 0o700);
+  } catch {
+    // best-effort directory mode
+  }
+  const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z');
+  const filePath = path.join(resultsDir, `${stamp}-${crypto.randomUUID().slice(0, 8)}.md`);
+  const text =
+    `---\n` +
+    `engine: ${payload.engine}\n` +
+    `timestamp: ${payload.timestamp || new Date().toISOString()}\n` +
+    `session_id: ${payload.session_id || ''}\n` +
+    `prompt: ${JSON.stringify(payload.prompt || '')}\n` +
+    `---\n\n` +
+    '````\n' +
+    `${payload.body ?? ''}\n` +
+    '````\n';
+  const fd = fs.openSync(filePath, 'wx', 0o600);
+  try {
+    fs.writeFileSync(fd, text);
+    try {
+      fs.fchmodSync(fd, 0o600);
+    } catch {
+      // best-effort file mode
+    }
+  } finally {
+    fs.closeSync(fd);
+  }
+  return filePath;
+}
+
+function persistResearchResult(payload, resultsDir) {
+  if (!resultsDir) return;
+  try {
+    const saved = saveResult(payload, resultsDir);
+    console.log(`Saved: ${saved}`);
+  } catch (err) {
+    console.error(`Warning: failed to save research result: ${err.message}`);
+  }
+}
+
+function parseResearchCliArgs(argv) {
+  let resumeId = null;
+  const promptParts = [];
+  let restIsPrompt = false;
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
+    if (restIsPrompt) {
+      promptParts.push(arg);
+      continue;
+    }
+    if (arg === '--') {
+      restIsPrompt = true;
+      continue;
+    }
+    if (arg === '--resume') {
+      const next = argv[i + 1];
+      if (next === undefined || next === '--') {
+        return { error: 'missing-resume-id' };
+      }
+      resumeId = next;
+      i += 1;
+      continue;
+    }
+    if (arg.startsWith('--resume=')) {
+      resumeId = arg.slice('--resume='.length);
+      continue;
+    }
+    restIsPrompt = true;
+    promptParts.push(arg);
+  }
+  return {
+    resumeId: resumeId || null,
+    prompt: promptParts.join(' ').trim(),
+  };
+}
 
 /**
  * Execute research prompt via Cursor CLI (agent) in ask mode.
@@ -40,6 +123,9 @@ export function runCursorResearch(prompt, options = {}) {
   );
 
   const args = ['-p', prompt, '--mode', 'ask', '--output-format', 'json'];
+  if (options.resumeId) {
+    args.push('--resume', options.resumeId);
+  }
 
   return new Promise((resolve, reject) => {
     let child;
@@ -140,6 +226,17 @@ export function runCursorResearch(prompt, options = {}) {
         warnings.push(
           'Warning (possible incomplete research): result text matched blocked|rejected|denied — response may be incomplete.'
         );
+      }
+
+      if (options.resumeId) {
+        const returnedId = parsed.session_id;
+        if (returnedId !== options.resumeId) {
+          return reject(
+            new Error(
+              `上下文未延续（resume 失败）：引擎返回了新会话 ${returnedId}，这可能是一次全新回答`
+            )
+          );
+        }
       }
 
       return resolve({
@@ -305,17 +402,49 @@ export async function main(argv = process.argv.slice(2)) {
     command = args.shift();
   }
 
-  const prompt = args.join(' ').trim();
+  if (command === 'implement') {
+    const prompt = args.join(' ').trim();
+    if (!prompt) {
+      console.error('Usage: cursor-cli.mjs research [--resume <id>] <prompt> | cursor-cli.mjs implement <prompt>');
+      process.exit(1);
+    }
+    try {
+      const result = await runCursorImplement(prompt);
+      if (result.warnings && result.warnings.length > 0) {
+        for (const warning of result.warnings) {
+          console.error(warning);
+        }
+      }
+      if (result.result) {
+        console.log(result.result);
+      }
+    } catch (err) {
+      console.error(`Error: ${err.message}`);
+      process.exit(1);
+    }
+    return;
+  }
+
+  const parsedArgs = parseResearchCliArgs(args);
+  if (parsedArgs.error === 'missing-resume-id') {
+    console.error('Usage: cursor-cli.mjs research [--resume <id>] <prompt> | cursor-cli.mjs implement <prompt>');
+    process.exit(1);
+  }
+  const { resumeId } = parsedArgs;
+  const prompt = parsedArgs.prompt;
   if (!prompt) {
-    console.error('Usage: cursor-cli.mjs research|implement <prompt>');
+    console.error('Usage: cursor-cli.mjs research [--resume <id>] <prompt> | cursor-cli.mjs implement <prompt>');
     process.exit(1);
   }
 
+  const resultsDir =
+    process.env.QUOTA_ROUTER_NO_SAVE === '1'
+      ? null
+      : process.env.QUOTA_ROUTER_RESULTS_DIR ||
+        path.join(os.homedir(), '.claude', 'quota-router', 'results');
+
   try {
-    const result =
-      command === 'implement'
-        ? await runCursorImplement(prompt)
-        : await runCursorResearch(prompt);
+    const result = await runCursorResearch(prompt, { resumeId: resumeId || undefined });
     if (result.warnings && result.warnings.length > 0) {
       for (const warning of result.warnings) {
         console.error(warning);
@@ -324,7 +453,15 @@ export async function main(argv = process.argv.slice(2)) {
     if (result.result) {
       console.log(result.result);
     }
-    // Partial success still exits 0 — warnings already went to stderr.
+    persistResearchResult(
+      {
+        engine: 'cursor',
+        session_id: result.session_id,
+        prompt,
+        body: result.result || '',
+      },
+      resultsDir
+    );
   } catch (err) {
     console.error(`Error: ${err.message}`);
     process.exit(1);

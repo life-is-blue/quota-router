@@ -1,84 +1,60 @@
 # PROGRESS.md
 
-## 任务0（2026-08-24）基线核对 — `/quota:setup` 就绪诊断
-- 基线：`node --test tests/*.test.mjs` → **34 pass / 0 fail / 0 skip** ✓（GOAL.md 基线 commit `1a46427`）
-- HEAD 起始：`a2da619`
+## 本 Sprint：G1 结果落盘 + G2 会话延续（目标发版 1.2.0）
 
-### 理解（≤10行）
-1. **目标**：新建 `plugins/router/`，提供 `/quota:setup`——纯诊断，并发检查 agy/cursor/codebuddy/codex 四引擎，输出 Markdown 就绪表；不可用只标注，**exit 恒 0**。
-2. **探测白名单硬编码**：安装一律 `--version`；登录仅 cursor 用 `agent status`（含 `Logged in`）；agy/codebuddy 登录恒 `unknown`；**codebuddy 只许 `--version`**（其余烧 token）。
-3. **codex**：纳入 `--version`；`codex login status` 先本机实测再定（结果见任务1）。
-4. **判据**：不以 exit code 为唯一依据（ENOENT=未装；有输出再匹配内容）；超时 10s SIGTERM→2s→SIGKILL；`Promise.all` 并发。
-5. **不做自动安装**；未装给安装指引文案。不烧 token > 如实报告 > 好看。
-6. **白名单改动**：仅 `plugins/router/**`、marketplace 追加一条、`tests/**`、PROGRESS/BLOCKED；不动 agy/cursor/codebuddy/package.json/GOAL。
-7. **验收**：真机四引擎表；`claude plugin validate .`；测试 ≥39 pass（含白名单守护）；反向验证证明禁令在拦。
+基线：GOAL.md `0c53e08`。不碰 `plugins/router`、marketplace、package.json、GOAL.md、docs。
+
+### [x] 任务0：静态数 `it(`
+- `rg -o '\bit\(' tests --glob '*.mjs' | wc -l` → **51**（动手前基线）。
+- 交付时 → **75**（51 + 24）。
+
+### 理解
+1. G1：三引擎各自 `saveResult`（不共享层）；同步 research 成功后先 stdout 再落盘；失败 warning + exit 0。
+2. 目录默认 `~/.claude/quota-router/results/`（0700），`QUOTA_ROUTER_RESULTS_DIR` / `QUOTA_ROUTER_NO_SAVE=1`；`wx`+0600；四反引号围栏。
+3. G2：CLI `--resume`/`--resume=`，`--` 后全是 prompt；agy→`--conversation`，cursor/codebuddy→`--resume`；安全 flags 每次重带。
+4. resume 后校验返回 id；不等则 reject「上下文未延续…」。
+5. 后台 research 不落盘；implement 不动。
 
 ---
 
 ## 执行日志
 
-### [x] 任务1：`plugins/router/scripts/setup.mjs`
-- 导出 `runSetupCheck({bins, timeoutMs})`；CLI 无参打印 Markdown 表，exit 恒 0。
-- 白名单：agy/codebuddy 仅 `--version`；cursor `--version` + `status`；codex `--version` + `login status`。
-- **codex 登录实测（2026-08-24）**：`codex login status` → `Logged in using ChatGPT`，exit 0，无副作用 → **采纳探测**（login=`logged-in`/`logged-out`/`unknown`）。
-- 拍板写「codex→unknown」与契约表/任务1「实测再定」冲突：按任务1实测结果走，记于此。agy/codebuddy 仍恒 `unknown`。
-- 建议偏离：`interpretLogin` 先判 logged-out（`Not logged in` 含 `logged in` 子串会误匹配）；plugin.json/`marketplace` name=`quota`（目录仍 `plugins/router/`）以得到 slash `/quota:setup`。
+### [x] 任务1：G1 落盘
+- 三文件各自实现 `saveResult` / `persistResearchResult`（无共享模块）。
+- 同步 research 成功路径：先 `console.log(result)`，再 best-effort 保存；`Saved: <path>` 或 stderr warning。
+- CLI 入口一次解析 `QUOTA_ROUTER_RESULTS_DIR` / `QUOTA_ROUTER_NO_SAVE`。
+- 自检：`node --check` 三 CLI → OK。
 
-### [x] 任务2：插件骨架
-- `plugins/router/.claude-plugin/plugin.json` v1.0.0（name=`quota`）
-- `plugins/router/commands/setup.md`：`allowed-tools: Bash(node:*)`，无 `disable-model-invocation`
-- marketplace `plugins` 追加 quota→`./plugins/router`；长度=4
-- `claude plugin validate .` → ✔ Validation passed
+### [x] 任务2：G2 resume
+- `runXResearch(prompt, { resumeId })` 拼原生 flag + 全部只读安全参数。
+- 成功后 id 校验（agy `conversation_id` / cursor&codebuddy `session_id`）。
+- codebuddy stderr 识别 `No conversation found`。
+- CLI 解析 `--resume` / `--resume=` / `--`；usage 已更新。
+- **完整 resume argv（验收比对）**：
+  - agy: `["-p","follow up","--output-format","json","--print-timeout","3m","--conversation","conv-abc"]`
+  - cursor: `["-p","follow up","--mode","ask","--output-format","json","--resume","sess-abc"]`
+  - codebuddy: `["-p","follow up","--permission-mode","dontAsk","--tools","Read,Glob,Grep","--output-format","json","--resume","sess-abc"]`
 
-### [x] 任务3：测试
-- `tests/fixtures/fake-engines/{agy,agent,codebuddy,codex,sleep-bin}` +x
-- `tests/setup.test.mjs`：5 条（全装 / ENOENT / 超时 / 白名单 argv / cursor logged-out）
-- 全量：`node --test tests/*.test.mjs` → **39 pass / 0 fail / 0 skip**
+### [x] 任务3：命令文档
+- 三家 `commands/research.md`：`argument-hint: '[--resume <id>] <topic>'`；正文说明从 Saved/结果文件取 id、`--resume` 续接、只续接本工作区自己创建的会话。
 
-### [x] 反向验证（codebuddy status 分支）
-```
-WITHOUT allow-status flag: {"code":0,"out":"fake-codebuddy: non-whitelist args received: status"}
-WITH allow-status flag: {"code":0,"out":"fake-status-would-burn-tokens"}
-REVERSE_OK: status branch works when explicitly enabled
-```
-恢复后全绿：39 pass / 0 fail / 0 skip
+### [x] 任务4：测试
+- fixture 新增：`CODE_FENCE` / `RESUME_ECHO_ID` / `RESUME_NEW_ID`；（codebuddy）`NO_CONVERSATION`；cursor/codebuddy 支持 `FAKE_*_ARGV_FILE`。
+- 每引擎 8 条（codebuddy 第 8 条为 No conversation found；agy/cursor 第 8 条为 unicode frontmatter）。
+- 现有 `runCli` 默认 `QUOTA_ROUTER_NO_SAVE=1`，避免旧用例写家目录（不弱化断言）。
+- 自检：`node --test tests/*.test.mjs` → **75 pass / 0 fail / 0 skip**。
 
-### [x] 硬指标
-1. 39 pass / 0 fail / 0 skip
-2. `git diff 1a46427 -- GOAL.md plugins/agy plugins/cursor plugins/codebuddy package.json` 为空；marketplace 只追加 quota 一条
-3. 真机 `node plugins/router/scripts/setup.mjs`：四引擎全 installed；cursor/codex logged-in；agy/codebuddy unknown；exit 0
-4. `BLOCKED.md`：无
+### [x] 反向验证（推演；真跑归验收方）
+1. **先保存后输出**：若把 `persistResearchResult` 挪到 `console.log(result)` 之前，且 RESULTS_DIR 注入为普通文件（不可 mkdir），则保存抛错会在输出之前打断主路径——G1.2「result 照常出现在 stdout + exit 0」会红。当前「先输出后保存」保证调研成功不被落盘失败吞掉。
+2. **删掉 id 校验**：若去掉 resume 后的 `returnedId !== resumeId` 判断，RESUME_NEW_ID（cursor 静默降级形态）会 resolve 成功——G2.2 会红。当前校验是 cursor 静默降级的唯一检测法。
 
----
+### [x] 硬指标自检
+1. 测试：**75 pass / 0 fail / 0 skip**（本机已跑）。
+2. `git diff 0c53e08 -- GOAL.md plugins/router .claude-plugin/marketplace.json package.json docs` → **空**。
+3. 真机 agy research → Saved id → `--resume` 追问：归验收方。
 
-## Sprint D：`/agy:implement`（2026-08-24）
+### 建议偏离
+- 无。落盘与 resume 均按契约实现；三引擎重复 `saveResult` ~30 行未抽共享层（GOAL 7.1）。
 
-### [x] 任务0：沙箱基线
-- 按任务书限制未运行 `npm test` 或 `node --test`。
-- 静态命令 `rg -o '\bit\(' tests --glob '*.mjs' | wc -l` → **40**。
-- 允许的自检仅使用 `node --check` 与直接调用 fake agy fixture。
-
-### [x] 任务1：核心脚本
-- `plugins/agy/scripts/agy-cli.mjs` 新增 `runAgyImplement` 与 `implement` CLI；保持 research/后台路径不变。
-- implement 固定注入只读 FILE 块模板，不传任何权限 flag；按 SUCCESS / ERROR+response / CANCELED / 其他状态四分支处理。
-- FILE 块尽力提取；无块保留原 response 并告警；CLI 先输出文件与行数清单，再输出完整 response，warnings 走 stderr。
-
-### [x] 任务2：命令文档
-- 新建 `plugins/agy/commands/implement.md`，声明 apply 模式、原样展示和用户确认、落盘前重读防覆盖、CANCELED 两条指引，以及 agy“已修改”声明不可信。
-
-### [x] 任务3：fixture 与测试
-- 扩展 `tests/fixtures/fake-agy-bin.mjs`，仅新增 implement SUCCESS/无块/ERROR+response/CANCELED/超时场景和可选 argv 记录，不改已有场景。
-- 新建 `tests/agy-implement.test.mjs` 共 **7** 条：两个 FILE 块、无块原样返回、ERROR 防御性成功、CANCELED 双指引、prompt/参数、ENOENT、原生 print timeout。
-- 静态 `it(` 总数：**47**（基线 40 + 新增 7）；未运行受沙箱限制的测试套件。
-
-### [x] 反向验证（静态推演）
-- 若把 `/===FILE:\s*(.+?)===\r?\n([\s\S]*?)===END===/g` 临时改成永远不匹配，场景 1 与 3 的 `files` 都会变成 `null`；两处 `result.files.length` 访问/长度断言必然失败，因此提取测试能拦截该退化。按任务书要求仅推演，未实际改坏代码或运行测试。
-
-### [x] Sprint D 自检证据
-- `node --check plugins/agy/scripts/agy-cli.mjs` → exit 0（无输出）。
-- `node --check tests/fixtures/fake-agy-bin.mjs` → exit 0（无输出）。
-- `node --check tests/agy-implement.test.mjs` → exit 0（无输出）。
-- 直接调用 fixture：IMPLEMENT_SUCCESS `exit=0/status=SUCCESS/response_len=161`；IMPLEMENT_NO_BLOCKS `0/SUCCESS/55`；IMPLEMENT_ERROR_WITH_RESPONSE `1/ERROR/69`；IMPLEMENT_CANCELED `1/CANCELED/0`；IMPLEMENT_TIMEOUT `1/ERROR/0`。
-- `rg -o '\bit\(' tests --glob '*.mjs' | wc -l` → **47**。
-- `git diff 95bed31 -- GOAL.md plugins/cursor plugins/codebuddy plugins/router .claude-plugin/marketplace.json package.json` → 空。
-- `git diff --check` → exit 0（无输出）；未安装依赖，未执行 git commit。
+### BLOCKED
+- 无（见 BLOCKED.md）。

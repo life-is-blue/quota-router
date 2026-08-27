@@ -9,8 +9,22 @@
  * Scenarios below mimic those exact quirks.
  */
 import process from 'node:process';
+import fs from 'node:fs';
 
 const scenario = process.env.FAKE_CODEBUDDY_SCENARIO || 'SUCCESS_NOT_LAST';
+
+if (process.env.FAKE_CODEBUDDY_ARGV_FILE) {
+  fs.writeFileSync(process.env.FAKE_CODEBUDDY_ARGV_FILE, JSON.stringify(process.argv.slice(2)));
+}
+
+function idFromArgv() {
+  const a = process.argv.slice(2);
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] === '--resume') return a[i + 1];
+    if (a[i].startsWith('--resume=')) return a[i].slice('--resume='.length);
+  }
+  return 'echo-without-resume-flag';
+}
 
 function emitArray(items) {
   process.stdout.write(JSON.stringify(items) + '\n');
@@ -123,6 +137,55 @@ switch (scenario) {
   case 'HUGE_BAD_JSON': {
     // exit 0 + ≥5000 bytes of invalid JSON → parse-fail Error.message must truncate Raw output.
     process.stdout.write('{' + 'z'.repeat(5000));
+    process.exit(0);
+    break;
+  }
+
+  case 'CODE_FENCE': {
+    emitArray([
+      {
+        type: 'result',
+        subtype: 'success',
+        is_error: false,
+        result: 'Example with fence:\n```js\nconst x = 1;\n```\nend.',
+        session_id: 'fake-session-fence-010',
+        usage: { input_tokens: 10, output_tokens: 20 },
+      },
+    ]);
+    break;
+  }
+
+  case 'RESUME_ECHO_ID': {
+    const resumeId = idFromArgv();
+    emitArray([
+      {
+        type: 'result',
+        subtype: 'success',
+        is_error: false,
+        result: `Resumed session ${resumeId} successfully.`,
+        session_id: resumeId,
+        usage: { input_tokens: 10, output_tokens: 10 },
+      },
+    ]);
+    break;
+  }
+
+  case 'RESUME_NEW_ID': {
+    emitArray([
+      {
+        type: 'result',
+        subtype: 'success',
+        is_error: false,
+        result: 'This looks like a fresh answer with no prior context.',
+        session_id: 'silent-new-session-999',
+        usage: { input_tokens: 10, output_tokens: 10 },
+      },
+    ]);
+    break;
+  }
+
+  case 'NO_CONVERSATION': {
+    process.stderr.write('No conversation found with session ID: dead-beef-id\n');
     process.exit(0);
     break;
   }

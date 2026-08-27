@@ -80,6 +80,57 @@ switch (scenario) {
     break;
   }
 
+  case 'CODE_FENCE': {
+    const output = {
+      conversation_id: 'fake-conv-fence-010',
+      status: 'SUCCESS',
+      response: 'Example with fence:\n```js\nconst x = 1;\n```\nend.',
+      duration_seconds: 0.5,
+      num_turns: 1,
+      usage: { input_tokens: 10, output_tokens: 20, total_tokens: 30 },
+    };
+    process.stdout.write(JSON.stringify(output) + '\n');
+    process.exit(0);
+    break;
+  }
+
+  case 'RESUME_ECHO_ID': {
+    const a = process.argv.slice(2);
+    let resumeId = 'echo-without-resume-flag';
+    for (let i = 0; i < a.length; i++) {
+      if (a[i] === '--conversation' || a[i] === '--resume') {
+        resumeId = a[i + 1];
+        break;
+      }
+    }
+    const output = {
+      conversation_id: resumeId,
+      status: 'SUCCESS',
+      response: `Resumed conversation ${resumeId} successfully.`,
+      duration_seconds: 0.4,
+      num_turns: 1,
+      usage: { input_tokens: 10, output_tokens: 10, total_tokens: 20 },
+    };
+    process.stdout.write(JSON.stringify(output) + '\n');
+    process.exit(0);
+    break;
+  }
+
+  case 'RESUME_NEW_ID': {
+    const output = {
+      conversation_id: 'silent-new-session-999',
+      status: 'SUCCESS',
+      response: 'This looks like a fresh answer with no prior context.',
+      duration_seconds: 0.4,
+      num_turns: 1,
+      usage: { input_tokens: 10, output_tokens: 10, total_tokens: 20 },
+    };
+    process.stdout.write(JSON.stringify(output) + '\n');
+    process.stderr.write('Warning: conversation not found; started a new conversation\n');
+    process.exit(0);
+    break;
+  }
+
   case 'IMPLEMENT_SUCCESS': {
     const output = {
       session_id: 'fake-session-implement-001',
