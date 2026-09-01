@@ -438,3 +438,12 @@ Sprint 1–4 都是"让 CLI 拿任务书改 quota-router 自己"。只读适配�
 2. codebuddy 走现有空 stdout 判法即可，但要把它 resume 失败的 stderr 文案（"No conversation found"）加进可识别错误。
 3. resume 成功时 session_id 不轮换（三家实测一致），连续 resume 链可行。
 4. 跨引擎 id：交给各引擎自己的报错透传，不做映射。
+
+## 14. Skill 交付与净室实测（2026-09-01）
+
+quota-router 知识已提炼为独立 agent skill（`~/.agents/skills/quota-router/SKILL.md`，symlink 分发到 Claude/Codex/Cursor 三家技能目录）。**skill 是入口层（路由决策 + 契约速查 + 三档能力降级：插件→裸调→如实拒绝），插件是强制层（落盘/id 校验/白名单/kill）**——判断归 prose、强制归代码，照 Anthropic 的架构镜头切的。
+
+**净室实测**（一个只读 skill、没见过 GOAL.md 的干净会话，裸调 codebuddy 完成 git worktree 调研）：
+- 通过：档位选择、路由分类（quick answer→codebuddy）、`command -v` 就绪检查、数组解析找 result 元素、失败形态排除、中英拒绝词扫描全部按 skill 执行；产出内容核实准确。
+- **新数据点**：带 `--tools Read,Glob,Grep` 的 codebuddy 调研类调用实测 **~24s**（路由表的 2–4s 是纯快问快答；耗时取决于任务是否触发工具调用）。
+- 净室暴露并已修补的 5 个缺口：①外层 timeout 无建议值（现为：快问 60s 打底、带工具调研 300s）；②codebuddy 行缺目录边界说明（实测无目录信任要求，与 agy 相反）；③codebuddy 判据缺「result 非空」显式要求 + `is_error`/`permission_denials` 不作判据的说明；④拒绝词假阳性甄别（答案正文描述第三方行为的"Git 会拒绝"不构成 CLI 拒绝证据）；⑤agy trustedWorkspaces 被拒时的修复动作（交互模式授权或改 settings.json）。
