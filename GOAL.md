@@ -447,3 +447,20 @@ quota-router 知识已提炼为独立 agent skill（`~/.agents/skills/quota-rout
 - 通过：档位选择、路由分类（quick answer→codebuddy）、`command -v` 就绪检查、数组解析找 result 元素、失败形态排除、中英拒绝词扫描全部按 skill 执行；产出内容核实准确。
 - **新数据点**：带 `--tools Read,Glob,Grep` 的 codebuddy 调研类调用实测 **~24s**（路由表的 2–4s 是纯快问快答；耗时取决于任务是否触发工具调用）。
 - 净室暴露并已修补的 5 个缺口：①外层 timeout 无建议值（现为：快问 60s 打底、带工具调研 300s）；②codebuddy 行缺目录边界说明（实测无目录信任要求，与 agy 相反）；③codebuddy 判据缺「result 非空」显式要求 + `is_error`/`permission_denials` 不作判据的说明；④拒绝词假阳性甄别（答案正文描述第三方行为的"Git 会拒绝"不构成 CLI 拒绝证据）；⑤agy trustedWorkspaces 被拒时的修复动作（交互模式授权或改 settings.json）。
+
+## 15. agy 图片查看契约（2026-09-02，使用反馈驱动的补充调研）
+
+**起因**：外部会话用 quota-router 技能让 agy 审查插画一致性，首次调用语法报错后试错成功——图片输入是契约矩阵的空白区。补测（确定性测试图：100×100 纯红 PNG，agy 1.1.19）：
+
+| 调用方式 | 结果 |
+| --- | --- |
+| prompt 里只写图片路径（"描述 xxx.png"） | **假成功**：exit 0 + `status:SUCCESS` + **response 空** + stderr auto-denied —— agy 默认走某个需要 command 权限的读路径，headless 静默拒绝 |
+| **prompt 明确要求用 `view_file` 工具读图** | **成功**：正确识别图片内容（纯红）；绝对路径和相对路径都通；`view_file` 不走 command 权限 |
+| `--input-format stream-json` + image content block | 硬错误：`stream input content block type "image" is not supported (only "text")` —— 流式输入通道只收 text |
+| `-p` 后直接跟 flag（如 `-p --input-format ...`） | flag 被当成 prompt 文本，报"took as its prompt"错误；流式场景用 `-p=` 占位 |
+
+**契约**：agy 看图 = prompt 里指名 `view_file` + 路径（绝对/相对皆可）。**判据强化**：agy 出现 `SUCCESS` + 空 response 时必须查 stderr（auto-denied 唯一线索）——这是继「resume 假成功」（13 节）后第四种假成功形态。
+
+**旁证**：`-p=` 后的 stream-json 输入事件名是 `user`（`user_message`/`message` 均报 unsupported，虽然图片块进不去，text 块的通道契约顺手记下）。
+
+**未测**（等第二次撞到再说）：cursor/codebuddy 的图片输入通道；agy 视频/多图。
