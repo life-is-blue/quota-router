@@ -4,16 +4,14 @@
 
 > Claude Code 当大脑，agy / Cursor / codebuddy 当手脚。一条命令，不切终端，不烧 Opus 额度。
 
-**为什么值得看这个仓库**：它不只是四个能用的命令，更是一套**被完整实测验证过的工作方法**——每个 CLI 的接入决策都有真实调用数据背书，三次预判被实测推翻的记录原样保留在文档里。想给项目加新引擎的人，照着走就不会踩我们已经踩过的坑。
-
-## 为什么做这个
-
-同时订阅了多个 AI 编码工具的开发者普遍面临：Opus 额度很贵但常被拿去回答"什么是 git rebase"这类问题；agy / Cursor / codebuddy 各有充裕额度却在吃灰；多终端之间人工搬运 prompt 和 diff 的摩擦让人放弃。quota-router 把这个流程收回单一会话：
+**这个项目诞生的那个下午**：我开发一个很小的工具，Opus 15 分钟就把当日额度打满，一下午没法干别的——而我的 agy / Cursor / codebuddy 订阅额度几乎没动过。就是那个下午的 frustration 变成了这个仓库。如果你也有过「贵模型被便宜问题吃掉额度」的经历，这就是为你做的。
 
 ```
 你说     /agy:research "Rust async trait 最佳实践"
 不再需要  切终端 → 登录 agy → 粘贴 → 等待 → 复制结果 → 切回来
 ```
+
+**为什么值得看这个仓库**：它不只是六个能用的命令，更是一套**被完整实测验证过的工作方法**——四个 CLI 的 headless 契约全部真实调用实测（同名 flag 三家三种语义；失败形态四样，其中两样是「exit 0 的假成功」）；六个 Sprint 全部由被接入的 CLI 自己照任务书建造、管理者独立验收 + 对抗评审。想给项目加新引擎的人，照着 [GOAL.md](GOAL.md) 走就不会踩我们已经踩过的坑。
 
 ## 安装
 
@@ -43,9 +41,10 @@ claude plugin install quota@quota-router
 | `/agy:research <topic>` | agy | 深度调研、读代码库 | ~110–130s |
 | `/agy:research --background` + `/agy:status` | agy | 长调研不阻塞会话 | 立即返回 job id |
 | `/cursor:research <topic>` | Cursor | 质量优先的调研 | ~235–320s |
-| `/cursor:implement <instruction>` | Cursor | 单文件小改动 | ~235s |
+| `/agy:implement <instruction>` | agy | **改文件（最安全）**：agy 只出内容、你确认后落盘 | ~2 分钟 |
+| `/cursor:implement <instruction>` | Cursor | 改文件（直接写，快） | ~235s |
 
-**路由口诀**（完整决策依据见 [GOAL.md](GOAL.md)）：快问 codebuddy、深查 agy、精修 cursor、改文件只有 cursor。**⚠️ `/cursor:implement` 输出里任何"我已验证"都不可信**——它可能在权限被挡后把猜的结果写进文件（实测过，warning 会提示），最终以你自己跑测试为准。
+**路由口诀**（完整决策依据见 [GOAL.md](GOAL.md)）：快问 codebuddy、深查 agy、精修 cursor、改文件首选 agy（确认后落盘）或 cursor（直接写）。**⚠️ 两个 implement 的输出里任何"我已验证"都不可信**——CLI 可能在权限被挡后把猜的结果写进文件（实测过，warning 会提示），最终以你自己跑测试为准。
 
 ## 这个项目验证过什么（开源贡献者请从这里读起）
 
