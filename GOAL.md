@@ -448,6 +448,8 @@ quota-router 知识已提炼为独立 agent skill（`~/.agents/skills/quota-rout
 - **新数据点**：带 `--tools Read,Glob,Grep` 的 codebuddy 调研类调用实测 **~24s**（路由表的 2–4s 是纯快问快答；耗时取决于任务是否触发工具调用）。
 - 净室暴露并已修补的 5 个缺口：①外层 timeout 无建议值（现为：快问 60s 打底、带工具调研 300s）；②codebuddy 行缺目录边界说明（实测无目录信任要求，与 agy 相反）；③codebuddy 判据缺「result 非空」显式要求 + `is_error`/`permission_denials` 不作判据的说明；④拒绝词假阳性甄别（答案正文描述第三方行为的"Git 会拒绝"不构成 CLI 拒绝证据）；⑤agy trustedWorkspaces 被拒时的修复动作（交互模式授权或改 settings.json）。
 
+> **2026-09-05 订正**：上一段"独立 agent skill"的表述已过期，见第 16 节——这份 skill 现在是别处仓库内容的 symlink，不再独立存在于本机某一处。
+
 ## 15. agy 图片查看契约（2026-09-02，使用反馈驱动的补充调研）
 
 **起因**：外部会话用 quota-router 技能让 agy 审查插画一致性，首次调用语法报错后试错成功——图片输入是契约矩阵的空白区。补测（确定性测试图：100×100 纯红 PNG，agy 1.1.19）：
@@ -462,5 +464,23 @@ quota-router 知识已提炼为独立 agent skill（`~/.agents/skills/quota-rout
 **契约**：agy 看图 = prompt 里指名 `view_file` + 路径（绝对/相对皆可）。**判据强化**：agy 出现 `SUCCESS` + 空 response 时必须查 stderr（auto-denied 唯一线索）——这是继「resume 假成功」（13 节）后第四种假成功形态。
 
 **旁证**：`-p=` 后的 stream-json 输入事件名是 `user`（`user_message`/`message` 均报 unsupported，虽然图片块进不去，text 块的通道契约顺手记下）。
+
+## 16. Skill 迁移与方法论去重（2026-09-05）
+
+**背景**：整理 `life-is-blue/agent-skills`（同作者的另一个公开 skill 仓库）时发现两处重复资产，做了合并/去重，本节记录结果，避免以后又对着过期陈述较真。
+
+### 16.1 第 14 节的"独立 agent skill"已不成立
+
+`~/.agents/skills/quota-router/SKILL.md` 不再是独立文件——现在是一条指向 `agent-skills` 仓库 `skills/quota-router/` 的 symlink（`~/.claude/skills`、`~/.codex/skills`、`~/.cursor/skills-cursor` 三处下游 symlink 透传解析到同一处，不用改）。内容也不是原样照搬：重写成英文，按引擎拆成 `references/{agy,cursor,codebuddy}.md` + 一份跨引擎 `known-failure-modes.md`（四种假成功形态：agy 写路径、cursor 部分成功陷阱、三家 resume 坏 id、agy 图片查看误拒），并显式划了一条边界——"quick research/lookup/single-file edit 归这个 skill，substantial multi-file coding work 归 `coding-agent`/`codex-delegate`"，本仓库不涉及后者。
+
+原因（第 14 节讨论过的架构）不变：**skill 是入口层（判断），插件是强制层（代码）**。这次迁移只是把"入口层"那份知识的唯一实体挪到了一个经测试、经校验的公开仓库里，本仓库的插件代码（强制层）没有任何变化，`GOAL.md`/`docs/METHODOLOGY.md` 仍然是插件本身的设计依据，不受影响。
+
+以后要看 skill 契约速查表，去 `agent-skills` 仓库找，不要指望本机 `~/.agents/skills/quota-router/SKILL.md` 是可独立编辑的文件——改了也会在下次同步时被 symlink 目标覆盖，白改。
+
+### 16.2 `docs/METHODOLOGY.md` 的内容已经被独立收敛、且更成熟的版本覆盖
+
+`agent-skills` 仓库同期新增了 `verified-dev-loop` skill——一套"任务书驱动的委派+验收"协议，源语料来自另一个项目（一次多 agent 的 Rust 重写，2026-08-21~23），跟本仓库无关，但五条核心实践和第 7.4/12 节沉淀的方法论**收敛到了几乎相同的结论**：任务书六要素（含"我替领导拍的板"这个短语，一字不差地出现在它的 `references/evidence.md` 里）、执行与评审角色分离且要求换引擎、验收不信自述要独立复核（它叫 withheld checks，对应这里的"暗卷抽查"）、路由决策留文档不进代码。它甚至在 `references/evidence.md` 里引用了"a separate multi-CLI router"的实测结论作为旁证——说的就是本仓库。
+
+`verified-dev-loop` 的版本更完整：给了任务契约的具体字段表、评审 verdict 的 JSON 信封格式、公开/隐藏 check 的信息隔离模型、窄修复契约的写法。**`docs/METHODOLOGY.md` 不需要再单独维护或搬运**——它是这套方法论的早期独立发现版本，现在权威版本在 `agent-skills/skills/verified-dev-loop/`。本文件保留作为历史记录（它是本仓库八个 Sprint 工作方式的真实来源，不是杜撰），但后续如果要复用或引用这套方法论，指向 `verified-dev-loop`，不要再从这份文档抄一遍。
 
 **未测**（等第二次撞到再说）：cursor/codebuddy 的图片输入通道；agy 视频/多图。
